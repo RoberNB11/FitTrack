@@ -35,8 +35,24 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 .item{padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px}
 .item:last-child{border-bottom:none}
 .pill{font-size:11px;background:var(--card2);border-radius:20px;padding:2px 9px;color:var(--sub)}
-.progress{height:8px;background:var(--card2);border-radius:8px;overflow:hidden;margin-top:8px}
-.progress>div{height:100%;background:var(--accent)}
+.progress{height:10px;background:var(--card2);border-radius:999px;overflow:hidden;margin-top:10px}
+.progress>div{height:100%;background:linear-gradient(90deg,var(--accent),#7dd3fc);border-radius:999px;transition:width .4s ease}
+.goal-hero{padding:18px;margin-bottom:14px;border-radius:18px;background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--accent);box-shadow:0 8px 28px rgba(0,0,0,.12)}
+.goal-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.goal-title{font-size:19px;font-weight:800;line-height:1.2}
+.goal-subtitle{font-size:12px;color:var(--sub);margin-top:4px}
+.goal-percent{font-size:24px;font-weight:900;color:var(--accent);white-space:nowrap}
+.goal-dual{display:grid;gap:14px;margin:18px 0 8px}.metric-track{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:11px}.metric-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:8px}.metric-head span{color:var(--sub)}.goal-progress-wrap{margin:18px 0 8px}
+.goal-progress{height:14px;background:var(--bg);border-radius:999px;padding:2px;overflow:hidden;border:1px solid var(--border)}
+.goal-progress>div{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#7dd3fc);transition:width .5s ease}.goal-metric-card{background:var(--card2);border:1px solid var(--border);border-radius:15px;padding:12px;margin-top:12px}.goal-three-values{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-top:10px}.goal-three-values span{display:flex;flex-direction:column;gap:2px;padding:7px 5px;text-align:center;background:var(--bg);border-radius:10px}.goal-three-values small{font-size:9px;color:var(--sub);text-transform:uppercase;letter-spacing:.05em}.goal-three-values b{font-size:13px}.goal-three-values .current{border:1px solid var(--accent)}
+.goal-scale{display:flex;justify-content:space-between;font-size:10.5px;color:var(--sub)}
+.goal-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0 10px}
+.goal-stat{background:var(--bg);border-radius:12px;padding:10px;text-align:center}
+.goal-stat b{display:block;font-size:16px}
+.goal-stat span{display:block;font-size:10px;color:var(--sub);margin-top:3px}
+.goal-motivation{text-align:center;font-size:12px;color:var(--sub);margin-top:12px}
+.goal-secondary{padding:12px 0;border-bottom:1px solid var(--border)}
+.goal-secondary:last-child{border-bottom:none}
 .statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center;margin:12px 0}
 .stat b{display:block;font-size:19px}
 .stat span{font-size:10.5px;color:var(--sub)}
@@ -63,9 +79,10 @@ let currentTab='entrenar',charts={},db=null,useDb=false;
 let draftEx='',draftDate=today();
 let draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
 let selectedExProgreso=null,selectedMedMetric='peso';
-let draftRoutine={nombre:'',ejercicios:[]},activeRoutine=null;
-let draftMed={fecha:today(),sexo:'M',peso:'',altura:'',cuello:'',pecho:'',biceps:'',pierna:'',cintura:'',cadera:''};
-let draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3',edad:'',act:'lig'};
+let draftRoutine={nombre:'',ejercicios:[]},activeRoutine=null,editingRoutineId=null;
+let draftMed={fecha:today(),sexo:'M',edad:'',peso:'',altura:'',cuello:'',pecho:'',biceps:'',pierna:'',cintura:'',cadera:''};
+let draftGoal={tipo:'definicion',sub:'medio',valor:'',meses:'3',act:'lig'};
+let editingGoalId=null;
 const main=document.getElementById('main');
 
 function today(){return new Date().toISOString().slice(0,10);}
@@ -76,18 +93,37 @@ function lsKey(c){return 'fittrack_'+c;}
 function lsGetAll(c){try{return JSON.parse(localStorage.getItem(lsKey(c))||'[]');}catch(e){return [];}}
 function lsSetAll(c,arr){try{localStorage.setItem(lsKey(c),JSON.stringify(arr));}catch(e){}}
 async function getAll(col){
-  if(useDb){try{const snap=await db.collection(col).orderBy('fecha','desc').limit(500).get();return snap.docs.map(d=>({id:d.id,...d.data()}));}catch(e){console.error(e);return [];}}
+  if(useDb){
+    try{
+      const snap=await db.collection(col).orderBy('fecha','desc').get();
+      const rows=snap.docs.map(d=>({id:d.id,...d.data()}));
+      // Mantener una copia local de respaldo para que los datos sigan disponibles
+      // aunque temporalmente no haya conexión con la base de datos.
+      lsSetAll(col,rows);
+      return rows;
+    }catch(e){
+      console.warn('Base de datos no disponible; usando copia local de respaldo',e);
+    }
+  }
   return lsGetAll(col).slice().sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 }
 async function addDoc(col,data){
   const id='id'+Date.now()+Math.random().toString(36).slice(2,7);
-  if(useDb){try{await db.collection(col).doc(id).set(data);}catch(e){console.error(e);}}
-  else{const arr=lsGetAll(col);arr.push({id,...data});lsSetAll(col,arr);}
+  const record={id,...data};
+  // Guardado local siempre: actúa como persistencia inmediata y copia de seguridad.
+  const arr=lsGetAll(col);arr.push(record);lsSetAll(col,arr);
+  if(useDb){try{await db.collection(col).doc(id).set(data);}catch(e){console.warn('No se pudo sincronizar con la base de datos; la copia local se conserva',e);}}
   return id;
 }
+async function updateDoc(col,id,data){
+  const arr=lsGetAll(col);
+  const i=arr.findIndex(x=>x.id===id);
+  if(i>-1){arr[i]={...arr[i],...data};lsSetAll(col,arr);}
+  if(useDb){try{await db.collection(col).doc(id).set(data,{merge:true});}catch(e){console.warn('No se pudo sincronizar la edición; la copia local se conserva',e);}}
+}
 async function delDoc(col,id){
-  if(useDb){try{await db.collection(col).doc(id).delete();}catch(e){console.error(e);}}
-  else{lsSetAll(col,lsGetAll(col).filter(x=>x.id!==id));}
+  lsSetAll(col,lsGetAll(col).filter(x=>x.id!==id));
+  if(useDb){try{await db.collection(col).doc(id).delete();}catch(e){console.warn('No se pudo sincronizar el borrado con la base de datos',e);}}
 }
 async function loadAll(){
   state.workouts=await getAll('workouts');
@@ -138,13 +174,23 @@ function saveWorkout(){
   });
 }
 function delWorkout(id){delDoc('workouts',id).then(async()=>{await loadAll();render();});}
+function lastWorkoutForExercise(name,date){
+  if(!name)return null;
+  return state.workouts.filter(w=>w.ejercicio===name&&(!date||w.fecha<date)).slice().sort((a,b)=>b.fecha.localeCompare(a.fecha))[0]||null;
+}
 function renderEntrenar(){
   const names=exerciseNames();
-  const setsHtml=draftSets.map((s,i)=>`<div class="set-row">
-    <input type="number" placeholder="Kg" value="${s.peso}" oninput="draftSets[${i}].peso=this.value">
-    <input type="number" placeholder="Reps" value="${s.reps}" oninput="draftSets[${i}].reps=this.value">
-    <input type="number" placeholder="%" value="${s.esfuerzo}" oninput="draftSets[${i}].esfuerzo=this.value">
-    <button onclick="removeSet(${i})">✕</button></div>`).join('');
+  const previous=lastWorkoutForExercise(draftEx,draftDate);
+  const prevSets=previous?.sets||[];
+  const setsHtml=draftSets.map((s,i)=>{
+    const ps=prevSets[i];
+    return `<div class="set-row">
+    <input type="number" placeholder="${ps?ps.peso+' kg':''||'Kg'}" value="${s.peso}" oninput="draftSets[${i}].peso=this.value">
+    <input type="number" placeholder="${ps?ps.reps+' reps':''||'Reps'}" value="${s.reps}" oninput="draftSets[${i}].reps=this.value">
+    <input type="number" placeholder="${ps?ps.esfuerzo+'%':''||'%'}" value="${s.esfuerzo}" oninput="draftSets[${i}].esfuerzo=this.value">
+    <button onclick="removeSet(${i})">✕</button></div>`;
+  }).join('');
+  const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%').join(' · ')}</div>`:'';
   const histHtml=state.workouts.length?state.workouts.slice(0,25).map(w=>{
     const top=w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
     const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
@@ -163,7 +209,7 @@ function renderEntrenar(){
     <input id="exInput" list="exList" placeholder="Ej. Press banca" value="${draftEx}" oninput="draftEx=this.value">
     <datalist id="exList">${names.map(n=>`<option value="${n}">`).join('')}</datalist>
     <label>Fecha</label><input type="date" value="${draftDate}" oninput="draftDate=this.value">
-    <label style="margin-top:14px">Series</label>
+    ${previousHint}<label style="margin-top:14px">Series</label>
     <div style="font-size:10.5px;color:var(--sub);display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:4px"><span>Kg</span><span>Reps</span><span>Esfuerzo %</span><span></span></div>
     ${setsHtml}
     <button class="btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet()">+ Serie</button>
@@ -180,10 +226,19 @@ function toggleRoutineEx(n){
 function saveRoutine(){
   if(!draftRoutine.nombre.trim()){alert('Ponle un nombre a la rutina');return;}
   if(!draftRoutine.ejercicios.length){alert('Elige al menos un ejercicio');return;}
-  addDoc('routines',{nombre:draftRoutine.nombre.trim(),ejercicios:draftRoutine.ejercicios.slice(),fecha:today()}).then(async()=>{
-    draftRoutine={nombre:'',ejercicios:[]};await loadAll();render();
-  });
+  const data={nombre:draftRoutine.nombre.trim(),ejercicios:draftRoutine.ejercicios.slice()};
+  if(editingRoutineId){
+    if(useDb){db.collection('routines').doc(editingRoutineId).set(data,{merge:true}).catch(e=>console.error(e)).then(async()=>{editingRoutineId=null;draftRoutine={nombre:'',ejercicios:[]};await loadAll();render();});}
+    else{const arr=lsGetAll('routines').map(r=>r.id===editingRoutineId?{...r,...data}:r);lsSetAll('routines',arr);editingRoutineId=null;draftRoutine={nombre:'',ejercicios:[]};loadAll().then(render);}
+    return;
+  }
+  addDoc('routines',{...data,fecha:today()}).then(async()=>{draftRoutine={nombre:'',ejercicios:[]};await loadAll();render();});
 }
+function editRoutine(id){
+  const r=state.routines.find(x=>x.id===id);if(!r)return;
+  editingRoutineId=id;draftRoutine={nombre:r.nombre,ejercicios:r.ejercicios.slice()};renderRutinas();
+}
+function cancelEditRoutine(){editingRoutineId=null;draftRoutine={nombre:'',ejercicios:[]};renderRutinas();}
 function delRoutine(id){
   if(activeRoutine&&activeRoutine.id===id)activeRoutine=null;
   delDoc('routines',id).then(async()=>{await loadAll();render();});
@@ -197,12 +252,12 @@ function renderRutinas(){
   const names=exerciseNames();
   const picker=names.length?names.map(n=>`<span class="tag ${draftRoutine.ejercicios.includes(n)?'active':''}" onclick="toggleRoutineEx('${n.replace(/'/g,"\\'")}')">${n}</span>`).join(''):'<span class="empty">Registra algún ejercicio primero en Entrenar</span>';
   const listHtml=state.routines.length?state.routines.map(r=>`<div class="item" style="display:block">
-    <div style="display:flex;justify-content:space-between;align-items:center"><b>${r.nombre}</b><div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="startRoutine('${r.id}')">Empezar</button><button class="btn-ghost btn-sm" onclick="delRoutine('${r.id}')">✕</button></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center"><b>${r.nombre}</b><div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="startRoutine('${r.id}')">Empezar</button><button class="btn-ghost btn-sm" onclick="editRoutine('${r.id}')">Editar</button><button class="btn-ghost btn-sm" onclick="delRoutine('${r.id}')">✕</button></div></div>
     <div class="tag-row" style="margin-top:6px">${r.ejercicios.map(n=>`<span class="pill">${n}</span>`).join('')}</div></div>`).join(''):'<div class="empty">Aún no tienes rutinas</div>';
-  main.innerHTML=`<div class="card"><h2>Nueva rutina</h2>
+  main.innerHTML=`<div class="card"><h2>${editingRoutineId?'Editar rutina':'Nueva rutina'}</h2>
     <label>Nombre</label><input placeholder="Ej. Empuje, Pierna día A..." value="${draftRoutine.nombre}" oninput="draftRoutine.nombre=this.value">
     <label style="margin-top:12px">Ejercicios</label><div class="tag-row">${picker}</div>
-    <button class="btn-primary" onclick="saveRoutine()">Guardar rutina</button></div>
+    <div class="row"><button class="btn-primary" onclick="saveRoutine()">${editingRoutineId?'Guardar cambios':'Guardar rutina'}</button>${editingRoutineId?'<button class="btn-ghost" style="margin-top:14px" onclick="cancelEditRoutine()">Cancelar</button>':''}</div></div>
     <div class="card"><h2>Tus rutinas</h2>${listHtml}</div>`;
 }
 
@@ -238,91 +293,172 @@ function renderProgreso(){
 
 // ---------- OBJETIVOS ----------
 const ACT_FACTORS={sed:1.2,lig:1.375,mod:1.55,int:1.725,muyint:1.9};
-function calcCalorias(g){
-  const m=state.measurements[0];
-  if(!m||!m.peso||!m.altura||!g.edad)return null;
-  const bmr=m.sexo==='F'?10*m.peso+6.25*m.altura-5*g.edad-161:10*m.peso+6.25*m.altura-5*g.edad+5;
-  const tdee=bmr*(ACT_FACTORS[g.act]||1.375);
-  let pct=0;
-  if(g.tipo==='definicion')pct=g.meses<=3?-0.20:g.meses<=6?-0.15:-0.10;
-  else if(g.tipo==='volumen')pct=g.meses<=3?0.15:g.meses<=6?0.10:0.06;
-  else if(g.tipo==='recomposicion')pct=g.meses<=3?-0.10:g.meses<=6?-0.07:-0.05;
-  return {tdee:Math.round(tdee),kcal:Math.round(tdee*(1+pct)),pct};
-}
-function currentValueFor(g){
-  if(g.tipo==='definicion'||g.tipo==='recomposicion'){const m=state.measurements.find(x=>x.grasa!=null);return m?m.grasa:null;}
-  if(g.tipo==='volumen'){
-    if(g.sub==='peso'){const m=state.measurements[0];return m?m.peso:null;}
-    const ws=state.workouts.filter(w=>w.ejercicio===g.sub);if(!ws.length)return null;
-    return Math.max(...ws.flatMap(w=>w.sets.map(s=>s.peso)));
+
+const GOAL_STRATEGIES={
+  volumen:{
+    limpio:{base:0.05,label:'superávit pequeño'},
+    normal:{base:0.10,label:'superávit moderado'},
+    sucio:{base:0.15,label:'superávit alto'}
+  },
+  definicion:{
+    suave:{base:-0.10,label:'déficit suave'},
+    medio:{base:-0.15,label:'déficit moderado'},
+    fuerte:{base:-0.20,label:'déficit alto'}
+  },
+  recomposicion:{
+    volumen:{base:0.05,label:'ligero superávit'},
+    normal:{base:-0.02,label:'cerca de mantenimiento'},
+    definicion:{base:-0.08,label:'déficit ligero'}
+  },
+  acondicionamiento:{
+    buena:{base:0.02,label:'mantenimiento / ligero margen'},
+    normal:{base:0,label:'mantenimiento'},
+    mala:{base:0.05,label:'mantenimiento / ligero superávit'}
   }
-  if(g.tipo==='acondicionamiento')return state.workouts.filter(w=>w.fecha>=g.fechaInicio).length;
-  return null;
-}
-function goalLabel(g){
-  if(g.tipo==='definicion')return 'Definición · Grasa corporal';
-  if(g.tipo==='recomposicion')return 'Recomposición · Grasa corporal';
-  if(g.tipo==='volumen')return 'Volumen · '+(g.sub==='peso'?'Peso corporal':g.sub);
-  if(g.tipo==='acondicionamiento')return 'Acondicionamiento · Entrenamientos';
-  return g.tipo;
-}
-function saveGoal(){
-  if(!draftGoal.valor){alert(draftGoal.tipo==='acondicionamiento'?'Indica cuántos entrenamientos quieres hacer':'Indica un valor objetivo');return;}
-  if(!draftGoal.edad){alert('Indica tu edad para calcular las calorías recomendadas');return;}
-  const fl=new Date();fl.setMonth(fl.getMonth()+ +draftGoal.meses);
-  const g={tipo:draftGoal.tipo,sub:draftGoal.tipo==='volumen'?(draftGoal.sub||'peso'):null,objetivo:+draftGoal.valor,fechaInicio:today(),fechaLimite:fl.toISOString().slice(0,10),meses:+draftGoal.meses,fecha:today(),edad:+draftGoal.edad,act:draftGoal.act};
-  g.inicial=g.tipo==='acondicionamiento'?0:currentValueFor(g);
-  addDoc('goals',g).then(async()=>{
-    draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3',edad:draftGoal.edad,act:draftGoal.act};await loadAll();render();
-  });
-}
-function delGoal(id){delDoc('goals',id).then(async()=>{await loadAll();render();});}
-function renderObjetivos(){
-  const names=exerciseNames();
-  let subField='';
-  if(draftGoal.tipo==='volumen')subField=`<label>¿Qué quieres subir?</label><select onchange="draftGoal.sub=this.value"><option value="peso">Peso corporal</option>${names.map(n=>`<option value="${n}">${n}</option>`).join('')}</select>`;
-  const valorLabel=draftGoal.tipo==='acondicionamiento'?'Nº de entrenamientos objetivo':(draftGoal.tipo==='volumen'?'Valor objetivo (kg)':'Grasa corporal objetivo (%)');
-  const goalsHtml=state.goals.length?state.goals.map(g=>{
-    const cur=currentValueFor(g);
-    let pct=0;
-    if(cur!=null&&g.inicial!=null&&g.objetivo!==g.inicial)pct=Math.max(0,Math.min(100,(cur-g.inicial)/(g.objetivo-g.inicial)*100));
-    const dias=Math.max(0,Math.ceil((new Date(g.fechaLimite)-new Date())/86400000));
-    const meta=g.tipo==='acondicionamiento'?g.objetivo+' sesiones':g.objetivo;
-    const extra=g.tipo==='recomposicion'&&cur!=null?`<div style="font-size:11px;color:var(--sub);margin-top:4px">Masa magra actual: ${(100-cur).toFixed(1)}%</div>`:'';
-    const cal=calcCalorias(g);
-    const calHtml=cal?`<div style="margin-top:8px;padding:8px 10px;background:var(--card2);border-radius:10px;font-size:12px"><b>${cal.kcal} kcal/día</b> <span style="color:var(--sub)">recomendadas (mantenimiento ~${cal.tdee} kcal${cal.pct===0?'':(cal.pct>0?', superávit del ':', déficit del ')+Math.abs(Math.round(cal.pct*100))+'%'})</span></div>`:'<div class="empty" style="padding:8px 0 0;font-size:11px">Añade una medida con peso y altura para ver tus calorías recomendadas</div>';
-    return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;justify-content:space-between"><b>${goalLabel(g)}</b><button class="btn-ghost btn-sm" onclick="delGoal('${g.id}')">✕</button></div>
-      <div style="font-size:12px;color:var(--sub)">${cur!=null?'Actual: '+(+cur).toFixed(1):'Sin datos aún'} → Meta: ${meta} · ${dias}d restantes</div>
-      <div class="progress"><div style="width:${pct}%"></div></div>${extra}${calHtml}</div>`;
-  }).join(''):'<div class="empty">Sin objetivos activos</div>';
-  main.innerHTML=`<div class="card"><h2>Nuevo objetivo</h2>
-    <label>Tipo</label>
-    <select onchange="draftGoal.tipo=this.value;draftGoal.sub='';render()">
-      <option value="definicion" ${draftGoal.tipo==='definicion'?'selected':''}>Definición</option>
-      <option value="volumen" ${draftGoal.tipo==='volumen'?'selected':''}>Volumen</option>
-      <option value="recomposicion" ${draftGoal.tipo==='recomposicion'?'selected':''}>Recomposición</option>
-      <option value="acondicionamiento" ${draftGoal.tipo==='acondicionamiento'?'selected':''}>Acondicionamiento</option>
-    </select>${subField}
-    <label>${valorLabel}</label><input type="number" value="${draftGoal.valor}" oninput="draftGoal.valor=this.value">
-    <label>Plazo</label>
-    <select onchange="draftGoal.meses=this.value">
-      <option value="3" ${draftGoal.meses==='3'?'selected':''}>3 meses</option>
-      <option value="6" ${draftGoal.meses==='6'?'selected':''}>6 meses</option>
-      <option value="12" ${draftGoal.meses==='12'?'selected':''}>12 meses</option>
-    </select>
-    <div class="row"><div><label>Edad</label><input type="number" value="${draftGoal.edad}" oninput="draftGoal.edad=this.value"></div>
-      <div><label>Actividad física</label><select onchange="draftGoal.act=this.value">
-        <option value="sed" ${draftGoal.act==='sed'?'selected':''}>Sedentario</option>
-        <option value="lig" ${draftGoal.act==='lig'?'selected':''}>Ligera (1-3d/sem)</option>
-        <option value="mod" ${draftGoal.act==='mod'?'selected':''}>Moderada (3-5d/sem)</option>
-        <option value="int" ${draftGoal.act==='int'?'selected':''}>Intensa (6-7d/sem)</option>
-        <option value="muyint" ${draftGoal.act==='muyint'?'selected':''}>Muy intensa</option>
-      </select></div></div>
-    <button class="btn-primary" onclick="saveGoal()">Crear objetivo</button></div>
-    <div class="card"><h2>Tus objetivos</h2>${goalsHtml}</div>`;
+};
+
+const GOAL_SUBS={
+  volumen:[['limpio','Limpio'],['normal','Normal'],['sucio','Sucio']],
+  definicion:[['suave','Suave'],['medio','Medio'],['fuerte','Fuerte']],
+  recomposicion:[['volumen','Objetivo volumen'],['normal','Normal'],['definicion','Objetivo definición']],
+  acondicionamiento:[['buena','Buena forma'],['normal','Normal'],['mala','Mala forma']]
+};
+
+function getDefaultSub(tipo){
+  return (GOAL_SUBS[tipo]||[])[1]?.[0]||(GOAL_SUBS[tipo]||[])[0]?.[0]||'';
 }
 
+function latestMeasurement(){
+  return state.measurements.slice().sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''))[0]||null;
+}
+
+function calcBaseTDEE(g){
+  const m=latestMeasurement();
+  const edad=+m?.edad;
+  if(!m||!m.peso||!m.altura||!edad)return null;
+  const bmr=m.sexo==='F'
+    ?10*m.peso+6.25*m.altura-5*edad-161
+    :10*m.peso+6.25*m.altura-5*edad+5;
+  return {bmr,tdee:bmr*(ACT_FACTORS[g.act]||1.375),edad};
+}
+
+function calcCalorias(g){
+  const base=calcBaseTDEE(g);if(!base)return null;
+  const strategy=GOAL_STRATEGIES[g.tipo]?.[g.sub];
+  if(!strategy)return null;
+  const meses=+g.meses||3;
+  const plazoFactor=meses>=12?0.70:meses>=6?0.85:1;
+  let pct=strategy.base*plazoFactor;
+  pct=Math.max(-0.23,Math.min(0.18,pct));
+  const kcal=Math.round(base.tdee*(1+pct)/10)*10;
+  return {tdee:Math.round(base.tdee),kcal,pct,estrategia:strategy.label,edad:base.edad};
+}
+
+function trainingDaysSince(fechaInicio){return new Set(state.workouts.filter(w=>w.fecha>=fechaInicio).map(w=>w.fecha)).size;}
+
+function currentValueFor(g){
+  const m=latestMeasurement();
+  return m?.peso!=null?m.peso:null;
+}
+function currentTrackingFor(g){
+  const m=latestMeasurement();
+  return {
+    peso:m?.peso!=null?m.peso:null,
+    grasa:m?.grasa!=null?m.grasa:null,
+    magra:m?.magra!=null?m.magra:null,
+    dias:trainingDaysSince(g.fechaInicio)
+  };
+}
+function targetUnit(g){return 'kg';}
+function metricProgress(current,initial,target,lowerIsBetter=false){
+  if(current==null||initial==null||target==null||initial===target)return 0;
+  const p=lowerIsBetter?(initial-current)/(initial-target)*100:(current-initial)/(target-initial)*100;
+  return Math.max(0,Math.min(100,p));
+}
+function weightProgress(g,current){
+  const initial=g.inicial!=null?+g.inicial:null, target=g.objetivo!=null?+g.objetivo:null;
+  if(initial==null||target==null)return 0;
+  if(target===initial)return current!=null&&Math.abs(current-target)<0.05?100:0;
+  return metricProgress(current,initial,target,target<initial);
+}
+
+function goalLabel(g){
+  const sub=(GOAL_SUBS[g.tipo]||[]).find(x=>x[0]===g.sub);
+  const main={definicion:'Definición',volumen:'Volumen',recomposicion:'Recomposición',acondicionamiento:'Acondicionamiento'}[g.tipo]||g.tipo;
+  return main+(sub?' · '+sub[1]:'');
+}
+
+function pctGoalProgress(g,cur){return weightProgress(g,cur);}
+
+
+function editGoal(id){
+  const g=state.goals.find(x=>x.id===id);if(!g)return;
+  draftGoal={tipo:g.tipo,sub:g.sub||getDefaultSub(g.tipo),valor:g.objetivo!=null?String(g.objetivo):'',meses:String(g.meses||3),act:g.act||'lig'};
+  editingGoalId=id;
+  render();
+}
+
+function cancelEditGoal(){
+  editingGoalId=null;
+  draftGoal={tipo:'definicion',sub:'medio',valor:'',meses:'3',act:'lig'};
+  render();
+}
+
+function saveGoal(){
+  if(!draftGoal.valor){alert('Indica tu peso objetivo en kg');return;}
+  if(+draftGoal.valor<=0){alert('El peso objetivo debe ser mayor que 0 kg');return;}
+  if(!latestMeasurement()?.edad){alert('Primero introduce tu edad en Medidas y guarda tus datos.');return;}
+  if(!latestMeasurement()?.peso){alert('Primero registra tu peso en Medidas.');return;}
+  if(!draftGoal.sub)draftGoal.sub=getDefaultSub(draftGoal.tipo);
+  const existing=editingGoalId?state.goals.find(x=>x.id===editingGoalId):null;
+  const common={tipo:draftGoal.tipo,sub:draftGoal.sub,objetivo:+draftGoal.valor,meses:+draftGoal.meses,act:draftGoal.act};
+  if(existing){
+    const d=new Date(existing.fechaInicio+'T00:00:00');d.setMonth(d.getMonth()+ +draftGoal.meses);
+    updateDoc('goals',existing.id,{...common,fechaLimite:d.toISOString().slice(0,10),fecha:today()}).then(async()=>{editingGoalId=null;await loadAll();render();});return;
+  }
+  const fl=new Date();fl.setMonth(fl.getMonth()+ +draftGoal.meses);
+  const g={...common,fechaInicio:today(),fechaLimite:fl.toISOString().slice(0,10),fecha:today()};
+  g.inicial=currentValueFor(g);
+  addDoc('goals',g).then(async()=>{draftGoal={tipo:'definicion',sub:'medio',valor:'',meses:'3',act:'lig'};await loadAll();render();});
+}
+
+function delGoal(id){
+  delDoc('goals',id).then(async()=>{await loadAll();render();});
+}
+
+function renderObjetivos(){
+  const latest=latestMeasurement();
+  if(!draftGoal.sub||!(GOAL_SUBS[draftGoal.tipo]||[]).some(x=>x[0]===draftGoal.sub)) draftGoal.sub=getDefaultSub(draftGoal.tipo);
+  const subs=(GOAL_SUBS[draftGoal.tipo]||[]).map(x=>`<option value="${x[0]}" ${draftGoal.sub===x[0]?'selected':''}>${x[1]}</option>`).join('');
+
+  const goalCard=(g,hero=false)=>{
+    const track=currentTrackingFor(g);
+    const actual=track.peso!=null?+track.peso:null;
+    const initial=g.inicial!=null?+g.inicial:null;
+    const target=g.objetivo!=null?+g.objetivo:null;
+    const pct=weightProgress(g,actual);
+    const dias=Math.max(0,Math.ceil((new Date(g.fechaLimite)-new Date())/86400000));
+    const cal=calcCalorias(g),done=pct>=99.9;
+    const motivation=done?'🎉 ¡Objetivo conseguido!':pct>=75?'🔥 Ya estás muy cerca':pct>=40?'💪 Vas por muy buen camino':'🚀 Cada registro te acerca un poco más';
+    const calHtml=cal?`<div style="margin-top:14px;padding:11px 13px;background:var(--bg);border-radius:12px;font-size:12px"><div><b>${cal.kcal} kcal/día</b> <span style="color:var(--sub)">· mantenimiento ~${cal.tdee} kcal</span></div><div style="margin-top:4px;color:var(--sub)">${cal.estrategia} · ${cal.pct>0?'+':''}${Math.round(cal.pct*100)}% · ${g.meses} meses</div></div>`:'<div class="empty" style="padding:10px 0 0;font-size:11px">Añade una medida completa en Medidas para calcular tus calorías.</div>';
+    const primary=`<div class="goal-metric-card"><div class="metric-head"><b>🎯 Peso corporal</b><b>${actual!=null?actual.toFixed(1):'—'} kg actual</b></div><div class="goal-progress"><div style="width:${pct}%"></div></div><div class="goal-three-values"><span><small>Inicial</small><b>${initial!=null?initial.toFixed(1):'—'} kg</b></span><span class="current"><small>Actual</small><b>${actual!=null?actual.toFixed(1):'—'} kg</b></span><span><small>Objetivo</small><b>${target!=null?target.toFixed(1):'—'} kg</b></span></div></div>`;
+    const fat=track.grasa!=null?track.grasa.toFixed(1):'—';
+    const lean=track.magra!=null?track.magra.toFixed(1):'—';
+    let extra=`<div class="goal-stats"><div class="goal-stat"><b>${fat}%</b><span>Grasa actual</span></div><div class="goal-stat"><b>${lean}%</b><span>Masa magra actual</span></div><div class="goal-stat"><b>${dias}d</b><span>Restantes</span></div></div>`;
+    if(g.tipo==='acondicionamiento'){
+      extra=`<div class="goal-stats"><div class="goal-stat"><b>${fat}%</b><span>Grasa actual</span></div><div class="goal-stat"><b>${lean}%</b><span>Masa magra actual</span></div><div class="goal-stat"><b>${track.dias}</b><span>Días entrenados</span></div></div>`;
+    }
+    const context=`<div style="margin-top:10px;font-size:12px;color:var(--sub)">${g.tipo==='acondicionamiento'?`🏃 Desde ${fmtDate(g.fechaInicio)} llevas <b style="color:var(--text)">${track.dias} días distintos</b> con entrenamiento registrado.`:`Seguimiento corporal · grasa ${fat}% · masa magra ${lean}%`}</div>`;
+    if(hero)return `<div class="goal-hero"><div class="goal-top"><div><div class="goal-title">${goalLabel(g)}</div><div class="goal-subtitle">Tu objetivo actual · ${dias} días restantes</div></div><div class="goal-percent">${Math.round(pct)}%</div></div>${primary}${extra}${context}<div class="goal-motivation">${motivation}</div>${calHtml}<div style="display:flex;gap:7px;margin-top:12px"><button class="btn-ghost btn-sm" style="flex:1" onclick="editGoal('${g.id}')">Editar objetivo</button><button class="btn-ghost btn-sm" onclick="delGoal('${g.id}')">Eliminar</button></div></div>`;
+    return `<div class="goal-secondary"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b>${goalLabel(g)}</b><div style="font-size:11px;color:var(--sub);margin-top:3px">${Math.round(pct)}% · ${actual!=null?actual.toFixed(1):'—'} kg → ${target!=null?target.toFixed(1):'—'} kg</div></div><div style="display:flex;gap:5px"><button class="btn-ghost btn-sm" onclick="editGoal('${g.id}')">Editar</button><button class="btn-ghost btn-sm" onclick="delGoal('${g.id}')">✕</button></div></div><div class="progress"><div style="width:${pct}%"></div></div></div>`;
+  };
+
+  const sortedGoals=state.goals.slice().sort((a,b)=>(b.fecha||b.fechaInicio||'').localeCompare(a.fecha||a.fechaInicio||''));
+  const activeGoal=sortedGoals[0]||null, otherGoals=sortedGoals.slice(1);
+  const othersHtml=otherGoals.length?`<div class="card"><h2>Otros objetivos</h2>${otherGoals.map(g=>goalCard(g,false)).join('')}</div>`:'';
+  const formTitle=editingGoalId?'Actualizar objetivo':'Nuevo objetivo', formButton=editingGoalId?'Guardar cambios':'Crear objetivo';
+  main.innerHTML=`${activeGoal?goalCard(activeGoal,true):`<div class="card"><div class="empty" style="padding:24px 10px"><div style="font-size:28px;margin-bottom:8px">🎯</div><b>Aún no tienes un objetivo activo</b><div style="margin-top:5px">Crea uno abajo para empezar a seguir tu progreso.</div></div></div>`}${othersHtml}<div class="card"><h2>${formTitle}</h2><label>Tipo</label><select ${editingGoalId?'disabled':''} onchange="draftGoal.tipo=this.value;draftGoal.sub=getDefaultSub(this.value);render()"><option value="definicion" ${draftGoal.tipo==='definicion'?'selected':''}>Definición</option><option value="volumen" ${draftGoal.tipo==='volumen'?'selected':''}>Volumen</option><option value="recomposicion" ${draftGoal.tipo==='recomposicion'?'selected':''}>Recomposición</option><option value="acondicionamiento" ${draftGoal.tipo==='acondicionamiento'?'selected':''}>Acondicionamiento</option></select><label>Forma</label><select onchange="draftGoal.sub=this.value">${subs}</select><label>Peso objetivo (kg)</label><input type="number" step="0.1" value="${draftGoal.valor}" oninput="draftGoal.valor=this.value"><label>Plazo</label><select onchange="draftGoal.meses=this.value"><option value="3" ${draftGoal.meses==='3'?'selected':''}>3 meses</option><option value="6" ${draftGoal.meses==='6'?'selected':''}>6 meses</option><option value="12" ${draftGoal.meses==='12'?'selected':''}>12 meses</option></select><label>Actividad física</label><select onchange="draftGoal.act=this.value"><option value="sed" ${draftGoal.act==='sed'?'selected':''}>Sedentario</option><option value="lig" ${draftGoal.act==='lig'?'selected':''}>Ligera (1-3d/sem)</option><option value="mod" ${draftGoal.act==='mod'?'selected':''}>Moderada (3-5d/sem)</option><option value="int" ${draftGoal.act==='int'?'selected':''}>Intensa (6-7d/sem)</option><option value="muyint" ${draftGoal.act==='muyint'?'selected':''}>Muy intensa</option></select><div style="display:flex;gap:7px"><button class="btn-primary" style="flex:1" onclick="saveGoal()">${formButton}</button>${editingGoalId?`<button class="btn-ghost" style="margin-top:14px" onclick="cancelEditGoal()">Cancelar</button>`:''}</div>${latest?.edad?`<div style="margin-top:9px;font-size:11px;color:var(--sub)">Edad utilizada: ${latest.edad} años · tomada de tu última medida.</div>`:`<div class="empty" style="padding:10px 0">Primero registra tu edad en Medidas.</div>`}</div>`;
+}
 // ---------- MEDIDAS ----------
 function calcGrasa(){
   const {sexo,cuello,cintura,altura,cadera}=draftMed;
@@ -341,10 +477,12 @@ function medPreviewHtml(){
 function updateMedField(k,v){draftMed[k]=v;const p=document.getElementById('medPreview');if(p)p.innerHTML=medPreviewHtml();}
 function selMedMetric(m){selectedMedMetric=m;render();}
 function saveMed(){
+  if(!draftMed.edad||+draftMed.edad<1){alert('Introduce tu edad');return;}
+  if(!draftMed.edad){alert('Introduce tu edad');return;}
   if(!draftMed.peso||!draftMed.altura){alert('Introduce al menos peso y altura');return;}
   const g=calcGrasa();
   const num=v=>v?+v:null;
-  const data={fecha:draftMed.fecha,sexo:draftMed.sexo,peso:+draftMed.peso,altura:+draftMed.altura,cuello:num(draftMed.cuello),cintura:num(draftMed.cintura),cadera:num(draftMed.cadera),pecho:num(draftMed.pecho),biceps:num(draftMed.biceps),pierna:num(draftMed.pierna),grasa:g,magra:g!=null?100-g:null};
+  const data={fecha:draftMed.fecha,sexo:draftMed.sexo,edad:+draftMed.edad,peso:+draftMed.peso,altura:+draftMed.altura,cuello:num(draftMed.cuello),cintura:num(draftMed.cintura),cadera:num(draftMed.cadera),pecho:num(draftMed.pecho),biceps:num(draftMed.biceps),pierna:num(draftMed.pierna),grasa:g,magra:g!=null?100-g:null};
   addDoc('measurements',data).then(async()=>{await loadAll();render();});
 }
 function delMed(id){delDoc('measurements',id).then(async()=>{await loadAll();render();});}
@@ -357,6 +495,7 @@ function renderMedidas(){
       <option value="M" ${draftMed.sexo==='M'?'selected':''}>Hombre</option>
       <option value="F" ${draftMed.sexo==='F'?'selected':''}>Mujer</option></select></div>
       <div><label>Fecha</label><input type="date" value="${draftMed.fecha}" oninput="draftMed.fecha=this.value"></div></div>
+    <label>Edad (años)</label><input type="number" min="1" max="120" value="${draftMed.edad}" oninput="updateMedField('edad',this.value)">
     <div class="row"><div><label>Peso (kg)</label><input type="number" value="${draftMed.peso}" oninput="updateMedField('peso',this.value)"></div>
       <div><label>Altura (cm)</label><input type="number" value="${draftMed.altura}" oninput="updateMedField('altura',this.value)"></div></div>
     <div class="row"><div><label>Cuello (cm)</label><input type="number" value="${draftMed.cuello}" oninput="updateMedField('cuello',this.value)"></div>
