@@ -65,7 +65,7 @@ let draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
 let selectedExProgreso=null,selectedMedMetric='peso';
 let draftRoutine={nombre:'',ejercicios:[]},activeRoutine=null;
 let draftMed={fecha:today(),sexo:'M',peso:'',altura:'',cuello:'',pecho:'',biceps:'',pierna:'',cintura:'',cadera:''};
-let draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3'};
+let draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3',edad:'',act:'lig'};
 const main=document.getElementById('main');
 
 function today(){return new Date().toISOString().slice(0,10);}
@@ -145,9 +145,13 @@ function renderEntrenar(){
     <input type="number" placeholder="Reps" value="${s.reps}" oninput="draftSets[${i}].reps=this.value">
     <input type="number" placeholder="%" value="${s.esfuerzo}" oninput="draftSets[${i}].esfuerzo=this.value">
     <button onclick="removeSet(${i})">✕</button></div>`).join('');
-  const histHtml=state.workouts.length?state.workouts.slice(0,25).map(w=>`<div class="item">
-    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> <span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span></div>
-    <button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div>`).join(''):'<div class="empty">Aún no hay entrenamientos registrados</div>';
+  const histHtml=state.workouts.length?state.workouts.slice(0,25).map(w=>{
+    const top=w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
+    const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
+    return `<div class="item">
+    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> <span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
+    <button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div>`;
+  }).join(''):'<div class="empty">Aún no hay entrenamientos registrados</div>';
   const routineBanner=activeRoutine?`<div class="card" style="border-color:var(--accent)">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Rutina: ${activeRoutine.nombre}</h2><button class="btn-ghost btn-sm" onclick="exitRoutine()">Salir</button></div>
     <div class="tag-row" style="margin-top:8px">${activeRoutine.ejercicios.map(n=>{
@@ -233,6 +237,18 @@ function renderProgreso(){
 }
 
 // ---------- OBJETIVOS ----------
+const ACT_FACTORS={sed:1.2,lig:1.375,mod:1.55,int:1.725,muyint:1.9};
+function calcCalorias(g){
+  const m=state.measurements[0];
+  if(!m||!m.peso||!m.altura||!g.edad)return null;
+  const bmr=m.sexo==='F'?10*m.peso+6.25*m.altura-5*g.edad-161:10*m.peso+6.25*m.altura-5*g.edad+5;
+  const tdee=bmr*(ACT_FACTORS[g.act]||1.375);
+  let pct=0;
+  if(g.tipo==='definicion')pct=g.meses<=3?-0.20:g.meses<=6?-0.15:-0.10;
+  else if(g.tipo==='volumen')pct=g.meses<=3?0.15:g.meses<=6?0.10:0.06;
+  else if(g.tipo==='recomposicion')pct=g.meses<=3?-0.10:g.meses<=6?-0.07:-0.05;
+  return {tdee:Math.round(tdee),kcal:Math.round(tdee*(1+pct)),pct};
+}
 function currentValueFor(g){
   if(g.tipo==='definicion'||g.tipo==='recomposicion'){const m=state.measurements.find(x=>x.grasa!=null);return m?m.grasa:null;}
   if(g.tipo==='volumen'){
@@ -252,11 +268,12 @@ function goalLabel(g){
 }
 function saveGoal(){
   if(!draftGoal.valor){alert(draftGoal.tipo==='acondicionamiento'?'Indica cuántos entrenamientos quieres hacer':'Indica un valor objetivo');return;}
+  if(!draftGoal.edad){alert('Indica tu edad para calcular las calorías recomendadas');return;}
   const fl=new Date();fl.setMonth(fl.getMonth()+ +draftGoal.meses);
-  const g={tipo:draftGoal.tipo,sub:draftGoal.tipo==='volumen'?(draftGoal.sub||'peso'):null,objetivo:+draftGoal.valor,fechaInicio:today(),fechaLimite:fl.toISOString().slice(0,10),meses:+draftGoal.meses,fecha:today()};
+  const g={tipo:draftGoal.tipo,sub:draftGoal.tipo==='volumen'?(draftGoal.sub||'peso'):null,objetivo:+draftGoal.valor,fechaInicio:today(),fechaLimite:fl.toISOString().slice(0,10),meses:+draftGoal.meses,fecha:today(),edad:+draftGoal.edad,act:draftGoal.act};
   g.inicial=g.tipo==='acondicionamiento'?0:currentValueFor(g);
   addDoc('goals',g).then(async()=>{
-    draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3'};await loadAll();render();
+    draftGoal={tipo:'definicion',sub:'',valor:'',meses:'3',edad:draftGoal.edad,act:draftGoal.act};await loadAll();render();
   });
 }
 function delGoal(id){delDoc('goals',id).then(async()=>{await loadAll();render();});}
@@ -272,10 +289,12 @@ function renderObjetivos(){
     const dias=Math.max(0,Math.ceil((new Date(g.fechaLimite)-new Date())/86400000));
     const meta=g.tipo==='acondicionamiento'?g.objetivo+' sesiones':g.objetivo;
     const extra=g.tipo==='recomposicion'&&cur!=null?`<div style="font-size:11px;color:var(--sub);margin-top:4px">Masa magra actual: ${(100-cur).toFixed(1)}%</div>`:'';
+    const cal=calcCalorias(g);
+    const calHtml=cal?`<div style="margin-top:8px;padding:8px 10px;background:var(--card2);border-radius:10px;font-size:12px"><b>${cal.kcal} kcal/día</b> <span style="color:var(--sub)">recomendadas (mantenimiento ~${cal.tdee} kcal${cal.pct===0?'':(cal.pct>0?', superávit del ':', déficit del ')+Math.abs(Math.round(cal.pct*100))+'%'})</span></div>`:'<div class="empty" style="padding:8px 0 0;font-size:11px">Añade una medida con peso y altura para ver tus calorías recomendadas</div>';
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between"><b>${goalLabel(g)}</b><button class="btn-ghost btn-sm" onclick="delGoal('${g.id}')">✕</button></div>
       <div style="font-size:12px;color:var(--sub)">${cur!=null?'Actual: '+(+cur).toFixed(1):'Sin datos aún'} → Meta: ${meta} · ${dias}d restantes</div>
-      <div class="progress"><div style="width:${pct}%"></div></div>${extra}</div>`;
+      <div class="progress"><div style="width:${pct}%"></div></div>${extra}${calHtml}</div>`;
   }).join(''):'<div class="empty">Sin objetivos activos</div>';
   main.innerHTML=`<div class="card"><h2>Nuevo objetivo</h2>
     <label>Tipo</label>
@@ -292,6 +311,14 @@ function renderObjetivos(){
       <option value="6" ${draftGoal.meses==='6'?'selected':''}>6 meses</option>
       <option value="12" ${draftGoal.meses==='12'?'selected':''}>12 meses</option>
     </select>
+    <div class="row"><div><label>Edad</label><input type="number" value="${draftGoal.edad}" oninput="draftGoal.edad=this.value"></div>
+      <div><label>Actividad física</label><select onchange="draftGoal.act=this.value">
+        <option value="sed" ${draftGoal.act==='sed'?'selected':''}>Sedentario</option>
+        <option value="lig" ${draftGoal.act==='lig'?'selected':''}>Ligera (1-3d/sem)</option>
+        <option value="mod" ${draftGoal.act==='mod'?'selected':''}>Moderada (3-5d/sem)</option>
+        <option value="int" ${draftGoal.act==='int'?'selected':''}>Intensa (6-7d/sem)</option>
+        <option value="muyint" ${draftGoal.act==='muyint'?'selected':''}>Muy intensa</option>
+      </select></div></div>
     <button class="btn-primary" onclick="saveGoal()">Crear objetivo</button></div>
     <div class="card"><h2>Tus objetivos</h2>${goalsHtml}</div>`;
 }
