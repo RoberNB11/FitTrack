@@ -6,16 +6,16 @@
 <title>FitTrack</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-:root{--bg:#0e1117;--card:#171b23;--card2:#1e232d;--text:#eef1f5;--sub:#8b93a3;--accent:#5CA8FF;--accent2:#FF7A45;--danger:#ff6b6b;--border:#252b36;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f4f5f7;--card:#fff;--card2:#eef0f3;--text:#1b1f27;--sub:#6b7280;--accent:#2F6FE0;--accent2:#d9660f;--border:#e3e5ea}}
-:root[data-theme="dark"]{--bg:#0e1117}
-html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+:root{--bg:#1b1410;--card:#241c16;--card2:#2d241c;--text:#f0e6d8;--sub:#b3a08c;--accent:#5CA8FF;--accent2:#FF7A45;--danger:#ff6b6b;--border:#3a2f25;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#f2e9d8;--card:#fbf5ea;--card2:#ede0c8;--text:#3a2f22;--sub:#8a7962;--accent:#2F6FE0;--accent2:#d9660f;--border:#ddcba8}}
+:root[data-theme="dark"]{--bg:#1b1410}
+html,body{height:100%}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif;height:100%;padding-bottom:80px}
-header{position:sticky;top:0;padding:calc(16px + env(safe-area-inset-top,0px)) 18px 10px;background:var(--bg);z-index:5;border-bottom:1px solid var(--border)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{flex:0 0 auto;padding:14px 18px 10px;background:var(--bg);border-bottom:1px solid var(--border)}
 h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.02em}
 .sub{color:var(--sub);font-size:12.5px;margin-top:3px}
-main{max-width:640px;margin:0 auto;padding:16px}
+main{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;max-width:640px;width:100%;margin:0 auto;padding:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:14px}
 .card h2{font-size:13px;margin:0 0 12px;color:var(--sub);text-transform:uppercase;letter-spacing:.05em;font-weight:700}
 label{font-size:12px;color:var(--sub);display:block;margin:10px 0 4px}
@@ -28,7 +28,7 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 .btn-sm{padding:6px 10px;font-size:12px}
 .set-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:6px}
 .set-row button{background:var(--card2);color:var(--danger);padding:8px}
-.tabbar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom,0px);z-index:10}
+.tabbar{flex:0 0 auto;display:flex;background:var(--card);border-top:1px solid var(--border)}
 .tabbar button{flex:1;background:none;border-radius:0;padding:10px 4px 8px;color:var(--sub);font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px;font-weight:600}
 .tabbar button.active{color:var(--accent)}
 .tabbar .ic{font-size:18px}
@@ -74,8 +74,9 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 <button data-tab="medidas"><span class="ic">📏</span>Medidas</button>
 </nav>
 <script>
-let state={workouts:[],measurements:[],goals:[],routines:[]};
-let currentTab='entrenar',charts={},db=null,useDb=false;
+let state={workouts:[],measurements:[],goals:[],routines:[],cardio:[]};
+let currentTab='entrenar',charts={},db=null,useDb=false,entrenarModo='fuerza';
+let draftCardio={tipo:'correr',fecha:today(),km:'',tiempo:'',largos:'',sets:'',tiempoSet:'',esfuerzo:'70'};
 let draftEx='',draftDate=today();
 let draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
 let selectedExProgreso=null,selectedMedMetric='peso';
@@ -130,6 +131,7 @@ async function loadAll(){
   state.measurements=await getAll('measurements');
   state.goals=await getAll('goals');
   state.routines=await getAll('routines');
+  state.cardio=await getAll('cardio');
 }
 
 function drawChart(id,labels,data,label,color){
@@ -160,6 +162,57 @@ function render(){
   else if(currentTab==='progreso')renderProgreso();
   else if(currentTab==='objetivos')renderObjetivos();
   else renderMedidas();
+}
+
+// ---------- CARDIO ----------
+function cardioIcon(t){return t==='correr'?'🏃':t==='natacion'?'🏊':'🪢';}
+function cardioNombre(t){return t==='correr'?'Correr':t==='natacion'?'Natación':'Comba';}
+function cardioSummary(c){
+  if(c.tipo==='correr')return `${c.km}km · ${c.tiempo}min`;
+  if(c.tipo==='natacion')return `${c.largos} largos · ${c.tiempo}min`;
+  return `${c.sets} sets × ${c.tiempoSet}s`;
+}
+function saveCardio(){
+  const d=draftCardio;
+  if(d.tipo==='correr'&&(!d.km||!d.tiempo)){alert('Indica los km y el tiempo');return;}
+  if(d.tipo==='natacion'&&(!d.largos||!d.tiempo)){alert('Indica los largos y el tiempo');return;}
+  if(d.tipo==='comba'&&(!d.sets||!d.tiempoSet)){alert('Indica los sets y el tiempo por set');return;}
+  const data={tipo:d.tipo,fecha:d.fecha,esfuerzo:+(d.esfuerzo||70)};
+  if(d.tipo==='correr'){data.km=+d.km;data.tiempo=+d.tiempo;}
+  if(d.tipo==='natacion'){data.largos=+d.largos;data.tiempo=+d.tiempo;}
+  if(d.tipo==='comba'){data.sets=+d.sets;data.tiempoSet=+d.tiempoSet;}
+  addDoc('cardio',data).then(async()=>{draftCardio={...d,km:'',tiempo:'',largos:'',sets:'',tiempoSet:''};await loadAll();render();});
+}
+function delCardio(id){delDoc('cardio',id).then(async()=>{await loadAll();render();});}
+function renderCardioForm(){
+  const d=draftCardio;
+  let fields='';
+  if(d.tipo==='correr')fields=`<div class="row"><div><label>Km</label><input type="number" step="0.1" value="${d.km}" oninput="draftCardio.km=this.value"></div><div><label>Tiempo (min)</label><input type="number" value="${d.tiempo}" oninput="draftCardio.tiempo=this.value"></div></div>`;
+  if(d.tipo==='natacion')fields=`<div class="row"><div><label>Largos</label><input type="number" value="${d.largos}" oninput="draftCardio.largos=this.value"></div><div><label>Tiempo (min)</label><input type="number" value="${d.tiempo}" oninput="draftCardio.tiempo=this.value"></div></div>`;
+  if(d.tipo==='comba')fields=`<div class="row"><div><label>Sets</label><input type="number" value="${d.sets}" oninput="draftCardio.sets=this.value"></div><div><label>Tiempo por set (seg)</label><input type="number" value="${d.tiempoSet}" oninput="draftCardio.tiempoSet=this.value"></div></div>`;
+  const hist=state.cardio.length?state.cardio.slice(0,20).map(c=>`<div class="item"><div>${cardioIcon(c.tipo)} <b>${cardioSummary(c)}</b><br><span class="pill">${fmtDate(c.fecha)}</span> <span style="font-size:11px;color:var(--sub)">Esfuerzo ${c.esfuerzo}%</span></div><button class="btn-ghost btn-sm" onclick="delCardio('${c.id}')">✕</button></div>`).join(''):'<div class="empty">Sin ejercicios aeróbicos registrados</div>';
+  return `<div class="card"><h2>Nuevo cardio</h2>
+    <div class="tag-row">${['correr','natacion','comba'].map(t=>`<span class="tag ${d.tipo===t?'active':''}" onclick="draftCardio.tipo='${t}';render()">${cardioIcon(t)} ${cardioNombre(t)}</span>`).join('')}</div>
+    <label>Fecha</label><input type="date" value="${d.fecha}" oninput="draftCardio.fecha=this.value">
+    ${fields}
+    <label>Esfuerzo (%)</label><input type="number" value="${d.esfuerzo}" oninput="draftCardio.esfuerzo=this.value">
+    <button class="btn-primary" onclick="saveCardio()">Guardar cardio</button></div>
+    <div class="card"><h2>Historial cardio</h2>${hist}</div>`;
+}
+
+// ---------- RECORRIDO (onboarding) ----------
+function onboardingDismissed(){try{return localStorage.getItem('fittrack_onboarding_dismissed')==='1';}catch(e){return false;}}
+function dismissOnboarding(){try{localStorage.setItem('fittrack_onboarding_dismissed','1');}catch(e){}render();}
+function onboardingCard(){
+  if(onboardingDismissed())return '';
+  const steps=[
+    {done:state.measurements.length>0,label:'Registra tus medidas',tab:'medidas'},
+    {done:state.goals.length>0,label:'Crea tu primer objetivo',tab:'objetivos'},
+    {done:state.workouts.length>0,label:'Registra tu primer ejercicio',tab:'entrenar'},
+    {done:state.routines.length>0,label:'Crea tu primera rutina',tab:'rutinas'}
+  ];
+  if(steps.every(s=>s.done)){try{localStorage.setItem('fittrack_onboarding_dismissed','1');}catch(e){}return '';}
+  return `<div class="card" style="border-color:var(--accent)"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Primeros pasos</h2><button class="btn-ghost btn-sm" onclick="dismissOnboarding()">✕</button></div>${steps.map(s=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;cursor:pointer" onclick="setTab('${s.tab}')"><span style="font-size:13px;color:${s.done?'var(--sub)':'var(--text)'}">${s.done?'✅':'⬜'} ${s.label}</span><span style="color:var(--sub);font-size:16px">›</span></div>`).join('')}</div>`;
 }
 
 // ---------- ENTRENAR ----------
@@ -200,11 +253,24 @@ function renderEntrenar(){
   }).join(''):'<div class="empty">Aún no hay entrenamientos registrados</div>';
   const routineBanner=activeRoutine?`<div class="card" style="border-color:var(--accent)">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Rutina: ${activeRoutine.nombre}</h2><button class="btn-ghost btn-sm" onclick="exitRoutine()">Salir</button></div>
-    <div class="tag-row" style="margin-top:8px">${activeRoutine.ejercicios.map(n=>{
+    <div style="margin-top:6px">${activeRoutine.ejercicios.map(n=>{
       const hecho=state.workouts.some(w=>w.ejercicio===n&&w.fecha===draftDate);
-      return `<span class="tag ${draftEx===n?'active':''}" onclick="draftEx='${n.replace(/'/g,"\\'")}';render()">${hecho?'✓ ':''}${n}</span>`;
+      const sessions=state.workouts.filter(w=>w.ejercicio===n).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+      const topOf=w=>w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
+      const last=sessions[sessions.length-1],prev=sessions[sessions.length-2];
+      const lastTop=last?topOf(last):null,prevTop=prev?topOf(prev):null;
+      const best=sessions.length?Math.max(...sessions.flatMap(w=>w.sets.map(s=>s.peso))):0;
+      const pctBar=best&&lastTop?Math.round(lastTop.peso/best*100):0;
+      const delta=prevTop&&lastTop?(lastTop.peso-prevTop.peso)/prevTop.peso*100:null;
+      const col=trendColor(delta);
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="draftEx='${n.replace(/'/g,"\\'")}';render()">
+        <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px;${draftEx===n?'color:var(--accent)':''}">${hecho?'✓ ':''}${n}</b><span style="font-size:11px;color:${col}">${lastTop?lastTop.peso+'kg×'+lastTop.reps:'sin datos'}</span></div>
+        <div class="progress" style="height:6px;margin-top:5px"><div style="width:${pctBar}%;background:${col}"></div></div>
+        <div style="font-size:10px;color:var(--sub);margin-top:3px">${sessions.length} sesiones · mejor ${best||'—'}kg${last?' · '+last.sets.length+' series':''}</div></div>`;
     }).join('')}</div></div>`:'';
-  main.innerHTML=`${routineBanner}<div class="card"><h2>Nuevo ejercicio</h2>
+  const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${entrenarModo==='fuerza'?'active':''}" onclick="entrenarModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${entrenarModo==='cardio'?'active':''}" onclick="entrenarModo='cardio';render()">🏃 Cardio</span></div>`;
+  if(entrenarModo==='cardio'){main.innerHTML=onboardingCard()+modoToggle+renderCardioForm();return;}
+  main.innerHTML=`${onboardingCard()}${modoToggle}${routineBanner}<div class="card"><h2>Nuevo ejercicio</h2>
     <label>Ejercicio</label>
     <input id="exInput" list="exList" placeholder="Ej. Press banca" value="${draftEx}" oninput="draftEx=this.value">
     <datalist id="exList">${names.map(n=>`<option value="${n}">`).join('')}</datalist>
