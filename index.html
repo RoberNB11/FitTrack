@@ -79,6 +79,7 @@ let currentTab='entrenar',charts={},db=null,useDb=false,entrenarModo='fuerza';
 let draftCardio={tipo:'correr',fecha:today(),km:'',tiempo:'',largos:'',sets:'',tiempoSet:'',esfuerzo:'70'};
 let draftEx='',draftDate=today();
 let draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
+let editingWorkoutId=null;
 let selectedExProgreso=null,selectedMedMetric='peso';
 let draftRoutine={nombre:'',ejercicios:[]},activeRoutine=null,editingRoutineId=null;
 let draftMed={fecha:today(),sexo:'M',edad:'',peso:'',altura:'',cuello:'',pecho:'',biceps:'',pierna:'',cintura:'',cadera:''};
@@ -167,6 +168,9 @@ function render(){
 // ---------- CARDIO ----------
 function cardioIcon(t){return t==='correr'?'🏃':t==='natacion'?'🏊':'🪢';}
 function cardioNombre(t){return t==='correr'?'Correr':t==='natacion'?'Natación':'Comba';}
+function isCardioItem(it){return typeof it==='string'&&it.startsWith('cardio:');}
+function cardioItemTipo(it){return it.slice(7);}
+function routineItemLabel(it){return isCardioItem(it)?cardioIcon(cardioItemTipo(it))+' '+cardioNombre(cardioItemTipo(it)):it;}
 function cardioSummary(c){
   if(c.tipo==='correr')return `${c.km}km · ${c.tiempo}min`;
   if(c.tipo==='natacion')return `${c.largos} largos · ${c.tiempo}min`;
@@ -222,14 +226,40 @@ function saveWorkout(){
   if(!draftEx.trim()){alert('Escribe el nombre del ejercicio');return;}
   const sets=draftSets.filter(s=>s.peso&&s.reps).map(s=>({peso:+s.peso,reps:+s.reps,esfuerzo:+(s.esfuerzo||80)}));
   if(!sets.length){alert('Añade al menos una serie con peso y repeticiones');return;}
-  addDoc('workouts',{ejercicio:draftEx.trim(),fecha:draftDate,sets}).then(async()=>{
-    draftEx='';draftSets=[{peso:'',reps:'',esfuerzo:'80'}];await loadAll();render();
-  });
+  const data={ejercicio:draftEx.trim(),fecha:draftDate,sets};
+  const after=()=>{editingWorkoutId=null;draftEx='';draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];loadAll().then(render);};
+  if(editingWorkoutId)updateDoc('workouts',editingWorkoutId,data).then(after);
+  else addDoc('workouts',data).then(after);
 }
-function delWorkout(id){delDoc('workouts',id).then(async()=>{await loadAll();render();});}
+function editWorkout(id){
+  const w=state.workouts.find(x=>x.id===id);if(!w)return;
+  editingWorkoutId=id;draftEx=w.ejercicio;draftDate=w.fecha;
+  draftSets=w.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo),touched:{peso:true,reps:true,esfuerzo:true}}));
+  renderEntrenar();
+  const el=document.getElementById('exInput');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function cancelEditWorkout(){editingWorkoutId=null;draftEx='';draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];renderEntrenar();}
+function delWorkout(id){
+  if(editingWorkoutId===id)cancelEditWorkout();
+  delDoc('workouts',id).then(async()=>{await loadAll();render();});
+}
 function lastWorkoutForExercise(name,date){
   if(!name)return null;
   return state.workouts.filter(w=>w.ejercicio===name&&(!date||w.fecha<date)).slice().sort((a,b)=>b.fecha.localeCompare(a.fecha))[0]||null;
+}
+function prefillSetsFrom(previous){
+  if(!previous||!previous.sets||!previous.sets.length)return [{peso:'',reps:'',esfuerzo:'80'}];
+  return previous.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo)}));
+}
+function selectRoutineExercise(n){
+  entrenarModo='fuerza';draftEx=n;
+  draftSets=prefillSetsFrom(lastWorkoutForExercise(n,draftDate));
+  render();
+}
+function confirmExerciseName(){
+  const blank=draftSets.every(s=>!s.peso&&!s.reps);
+  if(blank)draftSets=prefillSetsFrom(lastWorkoutForExercise(draftEx,draftDate));
+  render();
 }
 function renderEntrenar(){
   const names=exerciseNames();
@@ -237,10 +267,11 @@ function renderEntrenar(){
   const prevSets=previous?.sets||[];
   const setsHtml=draftSets.map((s,i)=>{
     const ps=prevSets[i];
+    const faint=f=>ps&&!(s.touched&&s.touched[f]);
     return `<div class="set-row">
-    <input type="number" placeholder="${ps?ps.peso+' kg':''||'Kg'}" value="${s.peso}" oninput="draftSets[${i}].peso=this.value">
-    <input type="number" placeholder="${ps?ps.reps+' reps':''||'Reps'}" value="${s.reps}" oninput="draftSets[${i}].reps=this.value">
-    <input type="number" placeholder="${ps?ps.esfuerzo+'%':''||'%'}" value="${s.esfuerzo}" oninput="draftSets[${i}].esfuerzo=this.value">
+    <input type="number" style="${faint('peso')?'color:var(--sub)':''}" placeholder="Kg" value="${s.peso}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.peso=true;draftSets[${i}].peso=this.value;this.style.color='var(--text)'">
+    <input type="number" style="${faint('reps')?'color:var(--sub)':''}" placeholder="Reps" value="${s.reps}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.reps=true;draftSets[${i}].reps=this.value;this.style.color='var(--text)'">
+    <input type="number" style="${faint('esfuerzo')?'color:var(--sub)':''}" placeholder="%" value="${s.esfuerzo}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.esfuerzo=true;draftSets[${i}].esfuerzo=this.value;this.style.color='var(--text)'">
     <button onclick="removeSet(${i})">✕</button></div>`;
   }).join('');
   const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%').join(' · ')}</div>`:'';
@@ -249,11 +280,21 @@ function renderEntrenar(){
     const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
     return `<div class="item">
     <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> <span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
-    <button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div>`;
+    <div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="editWorkout('${w.id}')">✎</button><button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div></div>`;
   }).join(''):'<div class="empty">Aún no hay entrenamientos registrados</div>';
   const routineBanner=activeRoutine?`<div class="card" style="border-color:var(--accent)">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Rutina: ${activeRoutine.nombre}</h2><button class="btn-ghost btn-sm" onclick="exitRoutine()">Salir</button></div>
-    <div style="margin-top:6px">${activeRoutine.ejercicios.map(n=>{
+    <div style="margin-top:6px">${activeRoutine.ejercicios.map(it=>{
+      if(isCardioItem(it)){
+        const t=cardioItemTipo(it);
+        const entries=state.cardio.filter(c=>c.tipo===t).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+        const hechoHoy=entries.some(c=>c.fecha===draftCardio.fecha);
+        const last=entries[entries.length-1];
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="entrenarModo='cardio';draftCardio.tipo='${t}';render()">
+          <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px;${entrenarModo==='cardio'&&draftCardio.tipo===t?'color:var(--accent)':''}">${hechoHoy?'✓ ':''}${cardioIcon(t)} ${cardioNombre(t)}</b><span style="font-size:11px;color:var(--sub)">${last?cardioSummary(last):'sin datos'}</span></div>
+          <div style="font-size:10px;color:var(--sub);margin-top:3px">${entries.length} sesiones</div></div>`;
+      }
+      const n=it;
       const hecho=state.workouts.some(w=>w.ejercicio===n&&w.fecha===draftDate);
       const sessions=state.workouts.filter(w=>w.ejercicio===n).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
       const topOf=w=>w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
@@ -263,23 +304,23 @@ function renderEntrenar(){
       const pctBar=best&&lastTop?Math.round(lastTop.peso/best*100):0;
       const delta=prevTop&&lastTop?(lastTop.peso-prevTop.peso)/prevTop.peso*100:null;
       const col=trendColor(delta);
-      return `<div style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="draftEx='${n.replace(/'/g,"\\'")}';render()">
-        <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px;${draftEx===n?'color:var(--accent)':''}">${hecho?'✓ ':''}${n}</b><span style="font-size:11px;color:${col}">${lastTop?lastTop.peso+'kg×'+lastTop.reps:'sin datos'}</span></div>
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="selectRoutineExercise('${n.replace(/'/g,"\\'")}')">
+        <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px;${entrenarModo==='fuerza'&&draftEx===n?'color:var(--accent)':''}">${hecho?'✓ ':''}${n}</b><span style="font-size:11px;color:${col}">${lastTop?lastTop.peso+'kg×'+lastTop.reps:'sin datos'}</span></div>
         <div class="progress" style="height:6px;margin-top:5px"><div style="width:${pctBar}%;background:${col}"></div></div>
         <div style="font-size:10px;color:var(--sub);margin-top:3px">${sessions.length} sesiones · mejor ${best||'—'}kg${last?' · '+last.sets.length+' series':''}</div></div>`;
     }).join('')}</div></div>`:'';
   const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${entrenarModo==='fuerza'?'active':''}" onclick="entrenarModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${entrenarModo==='cardio'?'active':''}" onclick="entrenarModo='cardio';render()">🏃 Cardio</span></div>`;
-  if(entrenarModo==='cardio'){main.innerHTML=onboardingCard()+modoToggle+renderCardioForm();return;}
-  main.innerHTML=`${onboardingCard()}${modoToggle}${routineBanner}<div class="card"><h2>Nuevo ejercicio</h2>
+  if(entrenarModo==='cardio'){main.innerHTML=onboardingCard()+modoToggle+routineBanner+renderCardioForm();return;}
+  main.innerHTML=`${onboardingCard()}${modoToggle}${routineBanner}<div class="card" style="${editingWorkoutId?'border-color:var(--accent)':''}"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">${editingWorkoutId?'Editar ejercicio':'Nuevo ejercicio'}</h2>${editingWorkoutId?'<button class="btn-ghost btn-sm" onclick="cancelEditWorkout()">Cancelar</button>':''}</div>
     <label>Ejercicio</label>
-    <input id="exInput" list="exList" placeholder="Ej. Press banca" value="${draftEx}" oninput="draftEx=this.value">
+    <input id="exInput" list="exList" placeholder="Ej. Press banca" value="${draftEx}" oninput="draftEx=this.value" onchange="confirmExerciseName()">
     <datalist id="exList">${names.map(n=>`<option value="${n}">`).join('')}</datalist>
     <label>Fecha</label><input type="date" value="${draftDate}" oninput="draftDate=this.value">
     ${previousHint}<label style="margin-top:14px">Series</label>
     <div style="font-size:10.5px;color:var(--sub);display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:4px"><span>Kg</span><span>Reps</span><span>Esfuerzo %</span><span></span></div>
     ${setsHtml}
     <button class="btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet()">+ Serie</button>
-    <button class="btn-primary" onclick="saveWorkout()">Guardar entrenamiento</button></div>
+    <button class="btn-primary" onclick="saveWorkout()">${editingWorkoutId?'Guardar cambios':'Guardar entrenamiento'}</button></div>
     <div class="card"><h2>Historial</h2>${histHtml}</div>`;
 }
 
@@ -311,25 +352,66 @@ function delRoutine(id){
 }
 function startRoutine(id){
   const r=state.routines.find(x=>x.id===id);if(!r)return;
-  activeRoutine=r;draftEx=r.ejercicios[0]||'';setTab('entrenar');
+  activeRoutine=r;
+  const first=r.ejercicios[0];
+  if(first&&isCardioItem(first)){entrenarModo='cardio';draftCardio.tipo=cardioItemTipo(first);}
+  else{entrenarModo='fuerza';draftEx=first||'';}
+  setTab('entrenar');
 }
 function exitRoutine(){activeRoutine=null;render();}
 function renderRutinas(){
   const names=exerciseNames();
-  const picker=names.length?names.map(n=>`<span class="tag ${draftRoutine.ejercicios.includes(n)?'active':''}" onclick="toggleRoutineEx('${n.replace(/'/g,"\\'")}')">${n}</span>`).join(''):'<span class="empty">Registra algún ejercicio primero en Entrenar</span>';
+  const picker=names.length?names.map(n=>`<span class="tag ${draftRoutine.ejercicios.includes(n)?'active':''}" onclick="toggleRoutineEx('${n.replace(/'/g,"\\'")}')">${n}</span>`).join(''):'<span class="empty">Registra algún ejercicio de fuerza primero en Entrenar</span>';
+  const cardioPicker=['correr','natacion','comba'].map(t=>{const key='cardio:'+t;return `<span class="tag ${draftRoutine.ejercicios.includes(key)?'active':''}" onclick="toggleRoutineEx('${key}')">${cardioIcon(t)} ${cardioNombre(t)}</span>`;}).join('');
   const listHtml=state.routines.length?state.routines.map(r=>`<div class="item" style="display:block">
     <div style="display:flex;justify-content:space-between;align-items:center"><b>${r.nombre}</b><div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="startRoutine('${r.id}')">Empezar</button><button class="btn-ghost btn-sm" onclick="editRoutine('${r.id}')">Editar</button><button class="btn-ghost btn-sm" onclick="delRoutine('${r.id}')">✕</button></div></div>
-    <div class="tag-row" style="margin-top:6px">${r.ejercicios.map(n=>`<span class="pill">${n}</span>`).join('')}</div></div>`).join(''):'<div class="empty">Aún no tienes rutinas</div>';
+    <div class="tag-row" style="margin-top:6px">${r.ejercicios.map(n=>`<span class="pill">${routineItemLabel(n)}</span>`).join('')}</div></div>`).join(''):'<div class="empty">Aún no tienes rutinas</div>';
   main.innerHTML=`<div class="card"><h2>${editingRoutineId?'Editar rutina':'Nueva rutina'}</h2>
     <label>Nombre</label><input placeholder="Ej. Empuje, Pierna día A..." value="${draftRoutine.nombre}" oninput="draftRoutine.nombre=this.value">
-    <label style="margin-top:12px">Ejercicios</label><div class="tag-row">${picker}</div>
+    <label style="margin-top:12px">Fuerza</label><div class="tag-row">${picker}</div>
+    <label>Cardio</label><div class="tag-row">${cardioPicker}</div>
     <div class="row"><button class="btn-primary" onclick="saveRoutine()">${editingRoutineId?'Guardar cambios':'Guardar rutina'}</button>${editingRoutineId?'<button class="btn-ghost" style="margin-top:14px" onclick="cancelEditRoutine()">Cancelar</button>':''}</div></div>
     <div class="card"><h2>Tus rutinas</h2>${listHtml}</div>`;
 }
 
 // ---------- PROGRESO ----------
+let progresoModo='fuerza',selectedCardioTipo='correr';
+function selectCardioTipo(t){selectedCardioTipo=t;render();}
+function renderProgresoCardio(prefix){
+  const tipos=['correr','natacion','comba'];
+  const tags=tipos.map(t=>`<span class="tag ${selectedCardioTipo===t?'active':''}" onclick="selectCardioTipo('${t}')">${cardioIcon(t)} ${cardioNombre(t)}</span>`).join('');
+  const entries=state.cardio.filter(c=>c.tipo===selectedCardioTipo).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  let statsHtml='',chartCard='<div class="empty">Registra sesiones de cardio para ver tu progreso</div>',data=[];
+  if(entries.length){
+    if(selectedCardioTipo==='correr'){
+      data=entries.map(e=>e.km);
+      const avgPace=entries.reduce((a,e)=>a+e.tiempo/e.km,0)/entries.length;
+      statsHtml=`<div class="statgrid"><div class="stat"><b>${Math.max(...data)}km</b><span>Mejor distancia</span></div><div class="stat"><b>${entries.length}</b><span>Sesiones</span></div><div class="stat"><b>${avgPace.toFixed(1)}</b><span>Ritmo medio (min/km)</span></div></div>`;
+    }else if(selectedCardioTipo==='natacion'){
+      data=entries.map(e=>e.largos);
+      const avgPace=entries.reduce((a,e)=>a+e.tiempo*60/e.largos,0)/entries.length;
+      statsHtml=`<div class="statgrid"><div class="stat"><b>${Math.max(...data)}</b><span>Más largos</span></div><div class="stat"><b>${entries.length}</b><span>Sesiones</span></div><div class="stat"><b>${avgPace.toFixed(0)}s</b><span>Ritmo medio/largo</span></div></div>`;
+    }else{
+      data=entries.map(e=>e.sets);
+      const avgT=entries.reduce((a,e)=>a+e.tiempoSet,0)/entries.length;
+      statsHtml=`<div class="statgrid"><div class="stat"><b>${Math.max(...data)}</b><span>Más sets</span></div><div class="stat"><b>${entries.length}</b><span>Sesiones</span></div><div class="stat"><b>${avgT.toFixed(0)}s</b><span>Tiempo medio/set</span></div></div>`;
+    }
+    let badge='';
+    if(data.length>=2){
+      const last=data[data.length-1],prev=data[data.length-2];
+      const p=prev?(last-prev)/prev*100:0,col=trendColor(p);
+      badge=`<div style="margin-bottom:8px"><span class="pill" style="background:${col}22;color:${col};font-weight:700">${p>0?'↑':p<0?'↓':'→'} ${p>0?'+':''}${p.toFixed(1)}% vs sesión anterior</span></div>`;
+    }
+    const legend=`<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--sub);margin-top:8px"><span><i style="color:#22c55e">●</i> Sube mucho</span><span><i style="color:#8fd19e">●</i> Sube</span><span><i style="color:#9aa5b8">●</i> Igual</span><span><i style="color:#f5a35c">●</i> Baja</span><span><i style="color:#ff6b6b">●</i> Baja mucho</span></div>`;
+    chartCard=badge+'<div class="chart-wrap"><canvas id="chartCardioProgreso"></canvas></div>'+legend;
+  }
+  main.innerHTML=`${prefix}<div class="card"><h2>Cardio</h2><div class="tag-row">${tags}</div>${statsHtml}${chartCard}</div>`;
+  if(entries.length)drawTrendChart('chartCardioProgreso',entries.map(e=>fmtDate(e.fecha)),data);
+}
 function selectEx(n){selectedExProgreso=n;render();}
 function renderProgreso(){
+  const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${progresoModo==='fuerza'?'active':''}" onclick="progresoModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${progresoModo==='cardio'?'active':''}" onclick="progresoModo='cardio';render()">🏃 Cardio</span></div>`;
+  if(progresoModo==='cardio'){renderProgresoCardio(modoToggle);return;}
   const names=exerciseNames();
   if(!selectedExProgreso||!names.includes(selectedExProgreso))selectedExProgreso=names[0]||null;
   const tags=names.map(n=>`<span class="tag ${n===selectedExProgreso?'active':''}" onclick="selectEx('${n.replace(/'/g,"\\'")}')">${n}</span>`).join('');
@@ -350,7 +432,7 @@ function renderProgreso(){
     const legend=`<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--sub);margin-top:8px"><span><i style="color:#22c55e">●</i> Sube mucho</span><span><i style="color:#8fd19e">●</i> Sube</span><span><i style="color:#9aa5b8">●</i> Igual</span><span><i style="color:#f5a35c">●</i> Baja</span><span><i style="color:#ff6b6b">●</i> Baja mucho</span></div>`;
     chartCard=badge+'<div class="chart-wrap"><canvas id="chartProgreso"></canvas></div>'+legend;
   }
-  main.innerHTML=`<div class="card"><h2>Ejercicio</h2><div class="tag-row">${tags||'<span class="empty">Sin ejercicios aún</span>'}</div>${statsHtml}${chartCard}</div>`;
+  main.innerHTML=`${modoToggle}<div class="card"><h2>Ejercicio</h2><div class="tag-row">${tags||'<span class="empty">Sin ejercicios aún</span>'}</div>${statsHtml}${chartCard}</div>`;
   if(selectedExProgreso){
     const sessions=state.workouts.filter(w=>w.ejercicio===selectedExProgreso).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
     drawTrendChart('chartProgreso',sessions.map(w=>fmtDate(w.fecha)),sessions.map(w=>Math.max(...w.sets.map(s=>s.peso))));
