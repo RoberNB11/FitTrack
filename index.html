@@ -78,7 +78,7 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 let state={workouts:[],measurements:[],goals:[],routines:[],cardio:[]};
 let currentTab='entrenar',charts={},db=null,useDb=false,entrenarModo='fuerza';
 let draftCardio={tipo:'correr',fecha:today(),km:'',tiempo:'',largos:'',sets:'',tiempoSet:'',esfuerzo:'70'};
-let draftEx='',draftDate=today();
+let draftEx='',draftDate=today(),exQuery='',showAllHist=false,prefilledFor=null;
 let draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
 let editingWorkoutId=null;
 let selectedExProgreso=null,selectedMedMetric='peso';
@@ -195,9 +195,9 @@ function renderCardioForm(inRoutine){
   if(d.tipo==='correr')fields=`<div class="row"><div><label>Km</label><input type="number" step="0.1" value="${d.km}" oninput="draftCardio.km=this.value"></div><div><label>Tiempo (min)</label><input type="number" value="${d.tiempo}" oninput="draftCardio.tiempo=this.value"></div></div>`;
   if(d.tipo==='natacion')fields=`<div class="row"><div><label>Largos</label><input type="number" value="${d.largos}" oninput="draftCardio.largos=this.value"></div><div><label>Tiempo (min)</label><input type="number" value="${d.tiempo}" oninput="draftCardio.tiempo=this.value"></div></div>`;
   if(d.tipo==='comba')fields=`<div class="row"><div><label>Sets</label><input type="number" value="${d.sets}" oninput="draftCardio.sets=this.value"></div><div><label>Tiempo por set (seg)</label><input type="number" value="${d.tiempoSet}" oninput="draftCardio.tiempoSet=this.value"></div></div>`;
-  const list=inRoutine?state.cardio.filter(c=>c.tipo===d.tipo):state.cardio;
-  const hist=list.length?list.slice(0,inRoutine?10:20).map(c=>`<div class="item"><div>${cardioIcon(c.tipo)} <b>${cardioSummary(c)}</b><br><span class="pill">${fmtDate(c.fecha)}</span> <span style="font-size:11px;color:var(--sub)">Esfuerzo ${c.esfuerzo}%</span></div><button class="btn-ghost btn-sm" onclick="delCardio('${c.id}')">✕</button></div>`).join(''):`<div class="empty">${inRoutine?'Aún no hay registros de '+cardioNombre(d.tipo):'Sin ejercicios aeróbicos registrados'}</div>`;
-  const lastC=inRoutine?state.cardio.find(c=>c.tipo===d.tipo&&c.fecha<d.fecha):null;
+  const list=state.cardio.filter(c=>c.tipo===d.tipo);
+  const hist=list.length?list.slice(0,10).map(c=>`<div class="item"><div>${cardioIcon(c.tipo)} <b>${cardioSummary(c)}</b><br><span class="pill">${fmtDate(c.fecha)}</span> <span style="font-size:11px;color:var(--sub)">Esfuerzo ${c.esfuerzo}%</span></div><button class="btn-ghost btn-sm" onclick="delCardio('${c.id}')">✕</button></div>`).join(''):`<div class="empty">${'Aún no hay registros de '+cardioNombre(d.tipo)}</div>`;
+  const lastC=state.cardio.find(c=>c.tipo===d.tipo&&c.fecha<d.fecha);
   const lastHint=lastC?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(lastC.fecha)} · ${cardioSummary(lastC)} @ ${lastC.esfuerzo}%</div>`:'';
   const head=inRoutine
     ?`<h2 style="margin-bottom:4px">Nuevo registro</h2><div class="cur" style="font-size:18px;margin:4px 0 2px">${cardioIcon(d.tipo)} ${cardioNombre(d.tipo)}</div>`
@@ -207,7 +207,7 @@ function renderCardioForm(inRoutine){
     ${lastHint}${fields}
     <label>Esfuerzo (%)</label><input type="number" value="${d.esfuerzo}" oninput="draftCardio.esfuerzo=this.value">
     <button class="btn-primary" onclick="saveCardio()">${inRoutine?'Guardar registro':'Guardar cardio'}</button></div>
-    <div class="card"><h2>${inRoutine?'Historial · '+cardioNombre(d.tipo):'Historial cardio'}</h2>${hist}</div>`;
+    <div class="card"><h2>Historial · ${cardioNombre(d.tipo)}</h2>${hist}</div>`;
 }
 
 // ---------- RECORRIDO (onboarding) ----------
@@ -232,13 +232,13 @@ function saveWorkout(){
   if(!draftEx.trim()){alert('Escribe el nombre del ejercicio');return;}
   const sets=draftSets.filter(s=>s.peso&&s.reps).map(s=>({peso:+s.peso,reps:+s.reps,esfuerzo:+(s.esfuerzo||80)}));
   if(!sets.length){alert('Añade al menos una serie con peso y repeticiones');return;}
-  const data={ejercicio:draftEx.trim(),fecha:draftDate,sets};
+  const data={ejercicio:findExercise(draftEx)||draftEx.trim(),fecha:draftDate,sets};
   const wasEditing=!!editingWorkoutId;
   const after=()=>{
     editingWorkoutId=null;
     loadAll().then(()=>{
       if(activeRoutine){draftDate=today();advanceRoutine(wasEditing);}
-      else{draftEx='';draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
+      else{draftEx='';exQuery='';prefilledFor=null;showAllHist=false;draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
       render();
     });
   };
@@ -256,7 +256,7 @@ function cancelEditWorkout(){
   const cur=activeRoutine?routineCurrentItem():null;
   editingWorkoutId=null;draftDate=today();
   if(cur)applyRoutineItem(cur);
-  else{draftEx='';draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
+  else{draftEx='';exQuery='';prefilledFor=null;draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
   renderEntrenar();
 }
 function delWorkout(id){
@@ -298,35 +298,94 @@ function advanceRoutine(stay){
   }
   applyRoutineItem(cur||items[0]);
 }
-function confirmExerciseName(){
-  const blank=draftSets.every(s=>!s.peso&&!s.reps);
-  if(blank)draftSets=prefillSetsFrom(lastWorkoutForExercise(draftEx,draftDate));
-  render();
+// Selector de ejercicios ya registrados (entrenamiento fuera de rutina)
+function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function norm(s){return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();}
+function exercisesByRecent(){
+  const last={};
+  state.workouts.forEach(w=>{if(!last[w.ejercicio]||w.fecha>last[w.ejercicio])last[w.ejercicio]=w.fecha;});
+  return Object.keys(last).sort((a,b)=>last[b].localeCompare(last[a])||a.localeCompare(b));
+}
+function findExercise(name){const n=norm(name);if(!n)return null;return exerciseNames().find(x=>norm(x)===n)||null;}
+function exChipsHtml(){
+  const all=exercisesByRecent();
+  if(!all.length)return '<div class="empty" style="padding:8px 0;width:100%">Aún no has registrado ningún ejercicio. Escribe un nombre arriba para crear el primero.</div>';
+  const q=norm(exQuery);
+  const list=all.filter(n=>!q||norm(n).includes(q));
+  if(!list.length)return `<div class="empty" style="padding:8px 0;width:100%">Ningún ejercicio coincide. Se creará «${escHtml(exQuery.trim())}» al guardar.</div>`;
+  return list.map(n=>`<span class="tag ${n===draftEx?'active':''}" data-n="${escHtml(n)}" onclick="selectExercise(this.dataset.n)">${escHtml(n)}</span>`).join('');
+}
+function selectExercise(n){
+  editingWorkoutId=null;entrenarModo='fuerza';
+  draftEx=n;exQuery='';prefilledFor=n;showAllHist=false;
+  draftSets=prefillSetsFrom(lastWorkoutForExercise(n,draftDate));
+  renderEntrenar();
+  const el=document.getElementById('seriesLabel');if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function onExInput(v){
+  draftEx=v;exQuery=v;
+  const untouched=draftSets.every(s=>!(s.touched&&(s.touched.peso||s.touched.reps||s.touched.esfuerzo)));
+  const hasValues=draftSets.some(s=>s.peso||s.reps);
+  if(prefilledFor&&norm(v)!==norm(prefilledFor)&&untouched&&hasValues&&!editingWorkoutId){
+    // Cambió el nombre del ejercicio cargado: quito los valores de la guía para no guardarlos por error
+    prefilledFor=null;draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
+    renderEntrenar();
+    const el=document.getElementById('exInput');
+    if(el){el.focus();try{el.setSelectionRange(v.length,v.length);}catch(e){}}
+    return;
+  }
+  const c=document.getElementById('exChips');if(c)c.innerHTML=exChipsHtml();
+}
+function setFocus(el,i,f){
+  const t=draftSets[i].touched;
+  if(t&&t[f])return;
+  if(el.value!==''){el.dataset.g=el.value;el.placeholder=el.value;el.value='';}
+}
+function setBlur(el,i,f){
+  const t=draftSets[i].touched;
+  if(t&&t[f])return;
+  if(el.value===''&&el.dataset.g!==undefined){el.value=el.dataset.g;}
+  delete el.dataset.g;
+}
+function onExEnter(){
+  const exact=findExercise(draftEx);
+  if(exact){selectExercise(exact);return;}
+  const q=norm(exQuery);
+  const m=q?exercisesByRecent().filter(n=>norm(n).includes(q)):[];
+  if(m.length===1){selectExercise(m[0]);return;}
+  if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+}
+function clearExercise(){
+  editingWorkoutId=null;draftEx='';exQuery='';prefilledFor=null;showAllHist=false;
+  draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
+  renderEntrenar();
 }
 function renderEntrenar(){
   if(activeRoutine){activeRoutine=state.routines.find(r=>r.id===activeRoutine.id)||null;}
   if(activeRoutine&&activeRoutine.ejercicios.length&&!routineCurrentItem())applyRoutineItem(activeRoutine.ejercicios[0]);
   const names=exerciseNames();
-  const previous=lastWorkoutForExercise(draftEx,draftDate);
+  const selEx=activeRoutine?draftEx:findExercise(draftEx);
+  const previous=lastWorkoutForExercise(selEx||draftEx,draftDate);
   const prevSets=previous?.sets||[];
   const setsHtml=draftSets.map((s,i)=>{
     const ps=prevSets[i];
     const faint=f=>ps&&!(s.touched&&s.touched[f]);
     return `<div class="set-row">
-    <input type="number" style="${faint('peso')?'color:var(--sub)':''}" placeholder="Kg" value="${s.peso}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.peso=true;draftSets[${i}].peso=this.value;this.style.color='var(--text)'">
-    <input type="number" style="${faint('reps')?'color:var(--sub)':''}" placeholder="Reps" value="${s.reps}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.reps=true;draftSets[${i}].reps=this.value;this.style.color='var(--text)'">
-    <input type="number" style="${faint('esfuerzo')?'color:var(--sub)':''}" placeholder="%" value="${s.esfuerzo}" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.esfuerzo=true;draftSets[${i}].esfuerzo=this.value;this.style.color='var(--text)'">
+    <input type="number" style="${faint('peso')?'color:var(--sub)':''}" placeholder="Kg" value="${s.peso}" onfocus="setFocus(this,${i},'peso')" onblur="setBlur(this,${i},'peso')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.peso=true;draftSets[${i}].peso=this.value;this.style.color='var(--text)'">
+    <input type="number" style="${faint('reps')?'color:var(--sub)':''}" placeholder="Reps" value="${s.reps}" onfocus="setFocus(this,${i},'reps')" onblur="setBlur(this,${i},'reps')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.reps=true;draftSets[${i}].reps=this.value;this.style.color='var(--text)'">
+    <input type="number" style="${faint('esfuerzo')?'color:var(--sub)':''}" placeholder="%" value="${s.esfuerzo}" onfocus="setFocus(this,${i},'esfuerzo')" onblur="setBlur(this,${i},'esfuerzo')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.esfuerzo=true;draftSets[${i}].esfuerzo=this.value;this.style.color='var(--text)'">
     <button onclick="removeSet(${i})">✕</button></div>`;
   }).join('');
   const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%').join(' · ')}</div>`:'';
-  const histSource=activeRoutine?state.workouts.filter(w=>w.ejercicio===draftEx):state.workouts;
-  const histHtml=histSource.length?histSource.slice(0,activeRoutine?10:25).map(w=>{
+  const filtered=!!selEx&&(!!activeRoutine||!showAllHist);
+  const histSource=filtered?state.workouts.filter(w=>w.ejercicio===selEx):state.workouts;
+  const histHtml=histSource.length?histSource.slice(0,filtered?10:25).map(w=>{
     const top=w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
     const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
     return `<div class="item">
     <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> <span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent-text);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
     <div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="editWorkout('${w.id}')">✎</button><button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div></div>`;
-  }).join(''):`<div class="empty">${activeRoutine?'Aún no hay registros de este ejercicio':'Aún no hay entrenamientos registrados'}</div>`;
+  }).join(''):`<div class="empty">${filtered?'Aún no hay registros de este ejercicio':'Aún no hay entrenamientos registrados'}</div>`;
   const doneCount=activeRoutine?activeRoutine.ejercicios.filter(routineItemDone).length:0;
   const routineBanner=activeRoutine?`<div class="card" style="border-color:var(--accent)">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Rutina: ${activeRoutine.nombre}</h2><div style="display:flex;gap:8px;align-items:center"><span class="pill">${doneCount}/${activeRoutine.ejercicios.length} hoy</span><button class="btn-ghost btn-sm" onclick="exitRoutine()">Salir</button></div></div>
@@ -358,21 +417,21 @@ function renderEntrenar(){
   const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${entrenarModo==='fuerza'?'active':''}" onclick="entrenarModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${entrenarModo==='cardio'?'active':''}" onclick="entrenarModo='cardio';render()">🏃 Cardio</span></div>`;
   const topBar=activeRoutine?'':onboardingCard()+modoToggle;
   if(entrenarModo==='cardio'){main.innerHTML=topBar+routineBanner+renderCardioForm(!!activeRoutine);return;}
-  const formTitle=editingWorkoutId?(activeRoutine?'Editar registro':'Editar ejercicio'):(activeRoutine?'Nuevo registro':'Nuevo ejercicio');
+  const formTitle=editingWorkoutId?(activeRoutine?'Editar registro':'Editar ejercicio'):(activeRoutine||selEx?'Nuevo registro':'Nuevo ejercicio');
   const exField=activeRoutine
     ?`<div class="cur" style="font-size:18px;margin:10px 0 2px">${draftEx}</div>`
-    :`<label>Ejercicio</label>
-    <input id="exInput" list="exList" placeholder="Ej. Press banca" value="${draftEx}" oninput="draftEx=this.value" onchange="confirmExerciseName()">
-    <datalist id="exList">${names.map(n=>`<option value="${n}">`).join('')}</datalist>`;
+    :`<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><label style="margin:0">Buscar o elegir ejercicio</label>${draftEx?'<button class="btn-ghost btn-sm" onclick="clearExercise()">Limpiar</button>':''}</div>
+    <input id="exInput" autocomplete="off" placeholder="Escribe para buscar o crear uno nuevo" style="margin-top:6px" value="${escHtml(draftEx)}" oninput="onExInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();onExEnter()}">
+    <div id="exChips" class="tag-row" style="margin-top:10px;max-height:132px;overflow-y:auto">${exChipsHtml()}</div>`;
   main.innerHTML=`${topBar}${routineBanner}<div class="card" id="formCard" style="${editingWorkoutId?'border-color:var(--accent)':''}"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">${formTitle}</h2>${editingWorkoutId?'<button class="btn-ghost btn-sm" onclick="cancelEditWorkout()">Cancelar</button>':''}</div>
     ${exField}
     <label>Fecha</label><input type="date" value="${draftDate}" oninput="draftDate=this.value">
-    ${previousHint}<label style="margin-top:14px">Series</label>
+    ${previousHint}<label id="seriesLabel" style="margin-top:14px">Series</label>
     <div style="font-size:10.5px;color:var(--sub);display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:4px"><span>Kg</span><span>Reps</span><span>Esfuerzo %</span><span></span></div>
     ${setsHtml}
     <button class="btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet()">+ Serie</button>
-    <button class="btn-primary" onclick="saveWorkout()">${editingWorkoutId?'Guardar cambios':(activeRoutine?'Guardar registro':'Guardar entrenamiento')}</button></div>
-    <div class="card"><h2>${activeRoutine?'Historial · '+draftEx:'Historial'}</h2>${histHtml}</div>`;
+    <button class="btn-primary" onclick="saveWorkout()">${editingWorkoutId?'Guardar cambios':(activeRoutine||selEx?'Guardar registro':'Guardar entrenamiento')}</button></div>
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="margin:0">${filtered?'Historial · '+escHtml(selEx):'Historial'}</h2>${!activeRoutine&&selEx?`<button class="btn-ghost btn-sm" onclick="showAllHist=!showAllHist;render()">${showAllHist?'Solo este':'Ver todo'}</button>`:''}</div>${histHtml}</div>`;
 }
 
 // ---------- RUTINAS ----------
