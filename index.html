@@ -75,7 +75,8 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 <button data-tab="medidas"><span class="ic">📏</span>Medidas</button>
 </nav>
 <script>
-let state={workouts:[],measurements:[],goals:[],routines:[],cardio:[]};
+let state={workouts:[],measurements:[],goals:[],routines:[],cardio:[],groups:[]};
+let groupSession=null,groupDraft=null,groupAdd=null,rGroupDraft=null;
 let currentTab='entrenar',charts={},db=null,useDb=false,entrenarModo='fuerza';
 let draftCardio={tipo:'correr',fecha:today(),km:'',tiempo:'',largos:'',sets:'',tiempoSet:'',esfuerzo:'70'};
 let draftEx='',draftDate=today(),exQuery='',showAllHist=false,prefilledFor=null;
@@ -134,6 +135,7 @@ async function loadAll(){
   state.goals=await getAll('goals');
   state.routines=await getAll('routines');
   state.cardio=await getAll('cardio');
+  state.groups=await getAll('groups');
 }
 
 function drawChart(id,labels,data,label,color){
@@ -171,7 +173,7 @@ function cardioIcon(t){return t==='correr'?'🏃':t==='natacion'?'🏊':'🪢';}
 function cardioNombre(t){return t==='correr'?'Correr':t==='natacion'?'Natación':'Comba';}
 function isCardioItem(it){return typeof it==='string'&&it.startsWith('cardio:');}
 function cardioItemTipo(it){return it.slice(7);}
-function routineItemLabel(it){return isCardioItem(it)?cardioIcon(cardioItemTipo(it))+' '+cardioNombre(cardioItemTipo(it)):it;}
+function routineItemLabel(it){if(isGroupItem(it)){const g=groupOfItem(it);return g?'🔗 '+g.nombre:'';}return isCardioItem(it)?cardioIcon(cardioItemTipo(it))+' '+cardioNombre(cardioItemTipo(it)):it;}
 function cardioSummary(c){
   if(c.tipo==='correr')return `${c.km}km · ${c.tiempo}min`;
   if(c.tipo==='natacion')return `${c.largos} largos · ${c.tiempo}min`;
@@ -234,10 +236,13 @@ function saveWorkout(){
   if(!sets.length){alert('Añade al menos una serie con peso y repeticiones');return;}
   const data={ejercicio:findExercise(draftEx)||draftEx.trim(),fecha:draftDate,sets};
   const wasEditing=!!editingWorkoutId;
+  const sg=currentGroup();
+  if(sg&&sg.ejercicios.includes(data.ejercicio)){data.grupo=sg.id;data.gnombre=sg.nombre;data.gtipo=sg.tipo;}
   const after=()=>{
     editingWorkoutId=null;
     loadAll().then(()=>{
-      if(activeRoutine){draftDate=today();advanceRoutine(wasEditing);}
+      if(groupSession&&currentGroup()){draftDate=today();advanceGroup(wasEditing);}
+      else if(activeRoutine){draftDate=today();advanceRoutine(wasEditing);}
       else{draftEx='';exQuery='';prefilledFor=null;showAllHist=false;draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
       render();
     });
@@ -255,7 +260,8 @@ function editWorkout(id){
 function cancelEditWorkout(){
   const cur=activeRoutine?routineCurrentItem():null;
   editingWorkoutId=null;draftDate=today();
-  if(cur)applyRoutineItem(cur);
+  if(groupSession&&currentGroup())selectGroupExercise(draftEx);
+  else if(cur)applyRoutineItem(cur);
   else{draftEx='';exQuery='';prefilledFor=null;draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
   renderEntrenar();
 }
@@ -272,16 +278,34 @@ function prefillSetsFrom(previous){
   return previous.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo)}));
 }
 // Rutina activa: ejercicio seleccionado, hecho hoy, navegación
+const GTIPOS={biserie:{n:'Biserie',min:2,max:2},triserie:{n:'Triserie',min:3,max:3},superserie:{n:'Superserie',min:2,max:6}};
+function isGroupItem(it){return typeof it==='string'&&it.startsWith('group:');}
+function groupById(id){return state.groups.find(g=>g.id===id)||null;}
+function groupOfItem(it){return isGroupItem(it)?groupById(it.slice(6)):null;}
+function gLabel(t){return (GTIPOS[t]||GTIPOS.superserie).n;}
+function currentGroup(){return groupSession?groupById(groupSession.id):null;}
+function exDoneOn(n,date){return state.workouts.some(w=>w.ejercicio===n&&w.fecha===date);}
 function routineCurrentItem(){
   if(!activeRoutine)return null;
+  if(groupSession){const k='group:'+groupSession.id;return activeRoutine.ejercicios.includes(k)?k:null;}
   const cur=entrenarModo==='cardio'?'cardio:'+draftCardio.tipo:draftEx;
   return activeRoutine.ejercicios.includes(cur)?cur:null;
 }
 function routineItemDone(it){
+  if(isGroupItem(it)){const g=groupOfItem(it);return !!g&&g.ejercicios.length>0&&g.ejercicios.every(n=>exDoneOn(n,draftDate));}
   if(isCardioItem(it))return state.cardio.some(c=>c.tipo===cardioItemTipo(it)&&c.fecha===draftCardio.fecha);
   return state.workouts.some(w=>w.ejercicio===it&&w.fecha===draftDate);
 }
+function startGroupSession(id){
+  const g=groupById(id);if(!g)return;
+  groupSession={id};groupDraft=null;groupAdd=null;editingWorkoutId=null;entrenarModo='fuerza';
+  const first=g.ejercicios.find(n=>!exDoneOn(n,draftDate))||g.ejercicios[0]||'';
+  draftEx=first;draftSets=prefillSetsFrom(lastWorkoutForExercise(first,draftDate));
+}
+function startGroup(id){startGroupSession(id);render();}
 function applyRoutineItem(it){
+  if(isGroupItem(it)){startGroupSession(it.slice(6));return;}
+  groupSession=null;
   if(isCardioItem(it)){entrenarModo='cardio';draftCardio.tipo=cardioItemTipo(it);}
   else{entrenarModo='fuerza';draftEx=it;draftSets=prefillSetsFrom(lastWorkoutForExercise(it,draftDate));}
 }
@@ -298,6 +322,98 @@ function advanceRoutine(stay){
   }
   applyRoutineItem(cur||items[0]);
 }
+// ---------- SERIES AGRUPADAS (biserie / triserie / superserie) ----------
+function openGroupPanel(){groupDraft={tipo:'biserie',nombre:''};renderEntrenar();setTimeout(()=>{const e=document.getElementById('gName');if(e)e.focus();},50);}
+async function createGroup(){
+  const nombre=(groupDraft.nombre||'').trim();
+  if(!nombre){alert('Ponle un nombre a la serie (por ejemplo «Congestión»)');return;}
+  const ex=findExercise(draftEx)||draftEx.trim();
+  if(!ex){alert('Elige primero un ejercicio');return;}
+  const id=await addDoc('groups',{nombre,tipo:groupDraft.tipo,ejercicios:[ex],fecha:today()});
+  await loadAll();
+  groupDraft=null;groupAdd=null;groupSession={id};draftEx=ex;
+  render();
+}
+function selectGroupExercise(n){
+  editingWorkoutId=null;draftEx=n;
+  draftSets=prefillSetsFrom(lastWorkoutForExercise(n,draftDate));
+  renderEntrenar();
+}
+function gaChipsHtml(){
+  const g=currentGroup();if(!g)return '';
+  const q=norm(groupAdd?groupAdd.q:'');
+  const list=exercisesByRecent().filter(n=>!g.ejercicios.includes(n)&&(!q||norm(n).includes(q)));
+  if(!list.length)return '<div class="empty" style="padding:6px 0;width:100%">Escribe el nombre de un ejercicio nuevo y pulsa «Añadir»</div>';
+  return list.map(n=>`<span class="tag" data-n="${escHtml(n)}" onclick="addToGroup(this.dataset.n)">${escHtml(n)}</span>`).join('');
+}
+function onGaInput(v){groupAdd.q=v;const c=document.getElementById('gaChips');if(c)c.innerHTML=gaChipsHtml();}
+async function addToGroup(name){
+  const g=currentGroup();if(!g)return;
+  const n=findExercise(name)||(name||'').trim();
+  if(!n)return;
+  if(g.ejercicios.some(x=>norm(x)===norm(n))){alert('Ese ejercicio ya está en la serie');return;}
+  if(g.ejercicios.length>=GTIPOS[g.tipo].max){alert('Una '+gLabel(g.tipo).toLowerCase()+' admite como máximo '+GTIPOS[g.tipo].max+' ejercicios');return;}
+  await updateDoc('groups',g.id,{ejercicios:[...g.ejercicios,n]});
+  await loadAll();
+  groupAdd=null;selectGroupExercise(n);
+}
+async function removeFromGroup(n){
+  const g=currentGroup();if(!g)return;
+  await updateDoc('groups',g.id,{ejercicios:g.ejercicios.filter(x=>x!==n)});
+  await loadAll();
+  if(draftEx===n){const g2=currentGroup();const nx=g2&&g2.ejercicios[0];if(nx)selectGroupExercise(nx);else renderEntrenar();}else renderEntrenar();
+}
+async function dropGroup(id){
+  // Elimina la serie y quita su marca de los registros y rutinas
+  for(const w of state.workouts.filter(w=>w.grupo===id)){await updateDoc('workouts',w.id,{grupo:null,gnombre:null,gtipo:null});}
+  for(const r of state.routines.filter(r=>r.ejercicios.includes('group:'+id))){await updateDoc('routines',r.id,{ejercicios:r.ejercicios.filter(x=>x!=='group:'+id)});}
+  await delDoc('groups',id);
+  await loadAll();
+}
+async function finishGroup(){
+  const g=currentGroup();if(!g){groupSession=null;render();return;}
+  const min=GTIPOS[g.tipo].min,n=g.ejercicios.length;
+  if(n<2){
+    if(!confirm('La serie solo tiene 1 ejercicio, así que no se guardará como serie agrupada. ¿Descartarla?'))return;
+    const id=g.id;groupSession=null;await dropGroup(id);
+    if(activeRoutine){applyRoutineItem(routineCurrentItem()||activeRoutine.ejercicios[0]||'');}
+    else{draftEx='';exQuery='';prefilledFor=null;draftSets=[{peso:'',reps:'',esfuerzo:'80'}];}
+    render();return;
+  }
+  if(n<min&&!confirm('Faltan '+(min-n)+' ejercicio(s) para completar la '+gLabel(g.tipo).toLowerCase()+'. ¿Terminar igualmente?'))return;
+  const key='group:'+g.id;
+  if(activeRoutine&&!activeRoutine.ejercicios.includes(key)&&confirm('¿Añadir «'+g.nombre+'» a la rutina «'+activeRoutine.nombre+'»?')){
+    await updateDoc('routines',activeRoutine.id,{ejercicios:[...activeRoutine.ejercicios,key]});
+    await loadAll();
+    activeRoutine=state.routines.find(r=>r.id===activeRoutine.id)||null;
+  }
+  editingWorkoutId=null;draftDate=today();
+  if(activeRoutine){
+    const items=activeRoutine.ejercicios,start=items.indexOf(key);
+    let next=null;
+    if(start>-1)for(let k=1;k<items.length;k++){const it=items[(start+k)%items.length];if(!routineItemDone(it)){next=it;break;}}
+    if(!next)next=items.find(i=>i!==key)||null;
+    groupSession=null;
+    if(next)applyRoutineItem(next);
+    else{exitRoutine();return;}
+  }else{
+    groupSession=null;draftEx='';exQuery='';prefilledFor=null;showAllHist=false;draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
+  }
+  render();
+}
+function advanceGroup(stay){
+  const g=currentGroup();if(!g)return;
+  const items=g.ejercicios,cur=draftEx;
+  if(!stay){
+    const idx=items.indexOf(cur);
+    for(let k=1;k<items.length;k++){
+      const nx=items[(idx+k)%items.length];
+      if(!exDoneOn(nx,draftDate)){selectGroupExercise(nx);return;}
+    }
+  }
+  draftSets=prefillSetsFrom(lastWorkoutForExercise(cur,draftDate));
+}
+
 // Selector de ejercicios ya registrados (entrenamiento fuera de rutina)
 function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function norm(s){return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();}
@@ -362,9 +478,14 @@ function clearExercise(){
 }
 function renderEntrenar(){
   if(activeRoutine){activeRoutine=state.routines.find(r=>r.id===activeRoutine.id)||null;}
-  if(activeRoutine&&activeRoutine.ejercicios.length&&!routineCurrentItem())applyRoutineItem(activeRoutine.ejercicios[0]);
+  if(groupSession&&!currentGroup())groupSession=null;
+  const inGroup=!!groupSession;
+  const fixed=!!activeRoutine||inGroup;
+  if(activeRoutine&&!inGroup&&activeRoutine.ejercicios.length&&!routineCurrentItem())applyRoutineItem(activeRoutine.ejercicios[0]);
+  if(groupSession&&!currentGroup())groupSession=null;
+  const inGroup2=!!groupSession;
   const names=exerciseNames();
-  const selEx=activeRoutine?draftEx:findExercise(draftEx);
+  const selEx=(fixed||inGroup2)?draftEx:findExercise(draftEx);
   const previous=lastWorkoutForExercise(selEx||draftEx,draftDate);
   const prevSets=previous?.sets||[];
   const setsHtml=draftSets.map((s,i)=>{
@@ -377,19 +498,26 @@ function renderEntrenar(){
     <button onclick="removeSet(${i})">✕</button></div>`;
   }).join('');
   const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%').join(' · ')}</div>`:'';
-  const filtered=!!selEx&&(!!activeRoutine||!showAllHist);
+  const filtered=!!selEx&&(!!activeRoutine||inGroup2||!showAllHist);
   const histSource=filtered?state.workouts.filter(w=>w.ejercicio===selEx):state.workouts;
   const histHtml=histSource.length?histSource.slice(0,filtered?10:25).map(w=>{
     const top=w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
     const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
     return `<div class="item">
-    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> <span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent-text);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
+    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> ${w.gnombre?`<span class="pill" style="border-left:3px solid var(--accent)">🔗 ${gLabel(w.gtipo)} · ${escHtml(w.gnombre)}</span> `:''}<span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent-text);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
     <div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="editWorkout('${w.id}')">✎</button><button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div></div>`;
   }).join(''):`<div class="empty">${filtered?'Aún no hay registros de este ejercicio':'Aún no hay entrenamientos registrados'}</div>`;
   const doneCount=activeRoutine?activeRoutine.ejercicios.filter(routineItemDone).length:0;
   const routineBanner=activeRoutine?`<div class="card" style="border-color:var(--accent)">
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Rutina: ${activeRoutine.nombre}</h2><div style="display:flex;gap:8px;align-items:center"><span class="pill">${doneCount}/${activeRoutine.ejercicios.length} hoy</span><button class="btn-ghost btn-sm" onclick="exitRoutine()">Salir</button></div></div>
     <div style="margin-top:6px">${activeRoutine.ejercicios.map(it=>{
+      if(isGroupItem(it)){
+        const g=groupOfItem(it);if(!g)return '';
+        const done=routineItemDone(it);
+        return `<div style="margin:8px 0;padding:6px 10px 8px;border-left:4px solid var(--accent);background:var(--card2);border-radius:10px;cursor:pointer" onclick="selectRoutineItem('group:${g.id}')">
+          <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:12px;letter-spacing:.04em">${done?'✓ ':''}🔗 ${gLabel(g.tipo).toUpperCase()} · ${escHtml(g.nombre)}</b><span style="font-size:10px;color:var(--sub)">${g.ejercicios.filter(n=>exDoneOn(n,draftDate)).length}/${g.ejercicios.length} hoy</span></div>
+          ${g.ejercicios.map(n=>{const ss=state.workouts.filter(w=>w.ejercicio===n).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));const l=ss[ss.length-1];const t=l?l.sets.reduce((a,x)=>x.peso>a.peso?x:a,l.sets[0]):null;return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--sub)"><span>${exDoneOn(n,draftDate)?'✓ ':'• '}${escHtml(n)}</span><span>${t?t.peso+'kg×'+t.reps:'sin datos'}</span></div>`;}).join('')}</div>`;
+      }
       if(isCardioItem(it)){
         const t=cardioItemTipo(it);
         const entries=state.cardio.filter(c=>c.tipo===t).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
@@ -415,26 +543,77 @@ function renderEntrenar(){
         <div style="font-size:10px;color:var(--sub);margin-top:3px">${sessions.length} sesiones · mejor ${best||'—'}kg${last?' · '+last.sets.length+' series':''}</div></div>`;
     }).join('')}</div></div>`:'';
   const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${entrenarModo==='fuerza'?'active':''}" onclick="entrenarModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${entrenarModo==='cardio'?'active':''}" onclick="entrenarModo='cardio';render()">🏃 Cardio</span></div>`;
-  const topBar=activeRoutine?'':onboardingCard()+modoToggle;
-  if(entrenarModo==='cardio'){main.innerHTML=topBar+routineBanner+renderCardioForm(!!activeRoutine);return;}
-  const formTitle=editingWorkoutId?(activeRoutine?'Editar registro':'Editar ejercicio'):(activeRoutine||selEx?'Nuevo registro':'Nuevo ejercicio');
-  const exField=activeRoutine
+  const topBar=fixed?'':onboardingCard()+modoToggle;
+  if(entrenarModo==='cardio'&&!inGroup2){main.innerHTML=topBar+routineBanner+renderCardioForm(!!activeRoutine);return;}
+  const formTitle=editingWorkoutId?(fixed?'Editar registro':'Editar ejercicio'):(fixed||selEx?'Nuevo registro':'Nuevo ejercicio');
+  const sg=inGroup2?currentGroup():null;
+  let groupBanner='';
+  if(sg){
+    const gmax=GTIPOS[sg.tipo].max,gmin=GTIPOS[sg.tipo].min,gn=sg.ejercicios.length;
+    const allDone=gn>=gmin&&sg.ejercicios.every(n=>exDoneOn(n,draftDate));
+    const rows=sg.ejercicios.map((n,i)=>{
+      const ss=state.workouts.filter(w=>w.ejercicio===n).slice().sort((a,b)=>a.fecha.localeCompare(b.fecha));
+      const l=ss[ss.length-1];const t=l?l.sets.reduce((a,x)=>x.peso>a.peso?x:a,l.sets[0]):null;
+      return `<div style="padding:8px 0;border-top:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px" data-n="${escHtml(n)}" onclick="selectGroupExercise(this.dataset.n)">
+        <b class="${n===draftEx?'cur':''}" style="font-size:13px">${exDoneOn(n,draftDate)?'✓ ':(i+1)+'. '}${escHtml(n)}</b>
+        <span style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;color:var(--sub)">${t?t.peso+'kg×'+t.reps:'sin datos'}</span>${gn>1?`<button class="btn-ghost btn-sm" data-n="${escHtml(n)}" onclick="event.stopPropagation();removeFromGroup(this.dataset.n)" title="Quitar de la serie">✕</button>`:''}</span></div>`;
+    }).join('');
+    const addBtn=gn<gmax?`<button class="btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="groupAdd=groupAdd?null:{q:''};renderEntrenar();setTimeout(()=>{const e=document.getElementById('gaInput');if(e)e.focus();},50)">${groupAdd?'Cerrar':'+ Añadir ejercicio ('+(sg.tipo==='superserie'?gn+' · máx. '+gmax:gn+'/'+gmax)+')'}</button>`:'';
+    const addPanel=groupAdd&&gn<gmax?`<div style="margin-top:8px"><div class="row"><input id="gaInput" autocomplete="off" placeholder="Buscar o escribir ejercicio nuevo" value="${escHtml(groupAdd.q)}" oninput="onGaInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addToGroup(groupAdd.q)}"><button class="btn-ghost btn-sm" style="flex:0 0 auto" onclick="addToGroup(groupAdd.q)">Añadir</button></div><div id="gaChips" class="tag-row" style="margin-top:8px;max-height:110px;overflow-y:auto">${gaChipsHtml()}</div></div>`:'';
+    groupBanner=`<div class="card" style="border-color:var(--accent);border-left:5px solid var(--accent)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><span class="pill">🔗 ${gLabel(sg.tipo).toUpperCase()}</span><h2 class="cur" style="margin:6px 0 0;font-size:18px">${escHtml(sg.nombre)}</h2></div><button class="btn-primary" style="width:auto;margin:0;padding:8px 14px" onclick="finishGroup()">Terminar serie</button></div>
+      <div style="margin-top:10px">${rows}</div>${addBtn}${addPanel}
+      ${allDone?'<div style="margin-top:10px;padding:8px 10px;border-radius:10px;background:var(--card2);font-size:12px;color:var(--sub)">✓ Serie completada hoy. Pulsa «Terminar serie» para volver.</div>':''}</div>`;
+  }
+  const groupBtn=(!inGroup2&&selEx&&!editingWorkoutId)?(groupDraft?`<div style="margin-top:12px;padding:12px;border-radius:12px;border:1px solid var(--accent);background:var(--card2)">
+      <b style="font-size:13px">Agrupar «${escHtml(selEx)}»</b>
+      <div class="tag-row" style="margin:8px 0">${Object.keys(GTIPOS).map(t=>`<span class="tag ${groupDraft.tipo===t?'active':''}" onclick="groupDraft.tipo='${t}';renderEntrenar()">${GTIPOS[t].n}</span>`).join('')}</div>
+      <label style="margin-top:4px">Nombre de la serie (obligatorio)</label><input id="gName" autocomplete="off" placeholder="Ej. Congestión" value="${escHtml(groupDraft.nombre)}" oninput="groupDraft.nombre=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();createGroup()}">
+      <div style="font-size:11px;color:var(--sub);margin-top:6px">${GTIPOS[groupDraft.tipo].n==='Superserie'?'De 2 a 6 ejercicios.':GTIPOS[groupDraft.tipo].max+' ejercicios.'} Después añadirás los demás dentro de la serie.</div>
+      <div class="row"><button class="btn-primary" onclick="createGroup()">Crear y entrenar</button><button class="btn-ghost" style="margin-top:14px" onclick="groupDraft=null;renderEntrenar()">Cancelar</button></div></div>`
+    :`<button class="btn-ghost btn-sm" style="width:100%;margin-top:12px" onclick="openGroupPanel()">🔗 Agrupar en biserie, triserie o superserie</button>`):'';
+  const groupsRow=(!fixed&&state.groups.length)?`<label style="margin-top:12px">Series agrupadas</label><div class="tag-row">${state.groups.map(g=>`<span class="tag" onclick="startGroup('${g.id}')">🔗 ${escHtml(g.nombre)} · ${gLabel(g.tipo)}</span>`).join('')}</div>`:'';
+  const exField=inGroup2
+    ?`<div class="cur" style="font-size:18px;margin:10px 0 2px">${escHtml(draftEx)}</div>`
+    :activeRoutine
     ?`<div class="cur" style="font-size:18px;margin:10px 0 2px">${draftEx}</div>`
     :`<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><label style="margin:0">Buscar o elegir ejercicio</label>${draftEx?'<button class="btn-ghost btn-sm" onclick="clearExercise()">Limpiar</button>':''}</div>
     <input id="exInput" autocomplete="off" placeholder="Escribe para buscar o crear uno nuevo" style="margin-top:6px" value="${escHtml(draftEx)}" oninput="onExInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();onExEnter()}">
-    <div id="exChips" class="tag-row" style="margin-top:10px;max-height:132px;overflow-y:auto">${exChipsHtml()}</div>`;
-  main.innerHTML=`${topBar}${routineBanner}<div class="card" id="formCard" style="${editingWorkoutId?'border-color:var(--accent)':''}"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">${formTitle}</h2>${editingWorkoutId?'<button class="btn-ghost btn-sm" onclick="cancelEditWorkout()">Cancelar</button>':''}</div>
-    ${exField}
+    <div id="exChips" class="tag-row" style="margin-top:10px;max-height:132px;overflow-y:auto">${exChipsHtml()}</div>${groupsRow}`;
+  main.innerHTML=`${topBar}${inGroup2?groupBanner:routineBanner}<div class="card" id="formCard" style="${editingWorkoutId?'border-color:var(--accent)':''}"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">${formTitle}</h2>${editingWorkoutId?'<button class="btn-ghost btn-sm" onclick="cancelEditWorkout()">Cancelar</button>':''}</div>
+    ${exField}${groupBtn}
     <label>Fecha</label><input type="date" value="${draftDate}" oninput="draftDate=this.value">
     ${previousHint}<label id="seriesLabel" style="margin-top:14px">Series</label>
     <div style="font-size:10.5px;color:var(--sub);display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:4px"><span>Kg</span><span>Reps</span><span>Esfuerzo %</span><span></span></div>
     ${setsHtml}
     <button class="btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet()">+ Serie</button>
-    <button class="btn-primary" onclick="saveWorkout()">${editingWorkoutId?'Guardar cambios':(activeRoutine||selEx?'Guardar registro':'Guardar entrenamiento')}</button></div>
-    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="margin:0">${filtered?'Historial · '+escHtml(selEx):'Historial'}</h2>${!activeRoutine&&selEx?`<button class="btn-ghost btn-sm" onclick="showAllHist=!showAllHist;render()">${showAllHist?'Solo este':'Ver todo'}</button>`:''}</div>${histHtml}</div>`;
+    <button class="btn-primary" onclick="saveWorkout()">${editingWorkoutId?'Guardar cambios':(fixed||selEx?'Guardar registro':'Guardar entrenamiento')}</button></div>
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="margin:0">${filtered?'Historial · '+escHtml(selEx):'Historial'}</h2>${!fixed&&selEx?`<button class="btn-ghost btn-sm" onclick="showAllHist=!showAllHist;render()">${showAllHist?'Solo este':'Ver todo'}</button>`:''}</div>${histHtml}</div>`;
 }
 
 // ---------- RUTINAS ----------
+function openRGroup(){rGroupDraft={tipo:'biserie',nombre:'',ejercicios:[]};renderRutinas();}
+function rGroupToggle(n){
+  const e=rGroupDraft.ejercicios,i=e.indexOf(n),max=GTIPOS[rGroupDraft.tipo].max;
+  if(i>-1)e.splice(i,1);else if(e.length<max)e.push(n);else{alert('Una '+gLabel(rGroupDraft.tipo).toLowerCase()+' admite como máximo '+max+' ejercicios');return;}
+  renderRutinas();
+}
+function rGroupTipo(t){rGroupDraft.tipo=t;rGroupDraft.ejercicios=rGroupDraft.ejercicios.slice(0,GTIPOS[t].max);renderRutinas();}
+async function createRGroup(){
+  const d=rGroupDraft,T=GTIPOS[d.tipo];
+  if(!(d.nombre||'').trim()){alert('Ponle un nombre a la serie (por ejemplo «Congestión»)');return;}
+  if(d.ejercicios.length<T.min){alert('Elige '+(T.min===T.max?'exactamente '+T.min:'al menos '+T.min)+' ejercicios para la '+T.n.toLowerCase());return;}
+  const id=await addDoc('groups',{nombre:d.nombre.trim(),tipo:d.tipo,ejercicios:d.ejercicios.slice(),fecha:today()});
+  draftRoutine.ejercicios.push('group:'+id);
+  rGroupDraft=null;await loadAll();renderRutinas();
+}
+async function delGroupUi(id){
+  const g=groupById(id);if(!g)return;
+  if(!confirm('¿Eliminar la serie «'+g.nombre+'»? Los registros de sus ejercicios se conservan.'))return;
+  if(groupSession&&groupSession.id===id)groupSession=null;
+  draftRoutine.ejercicios=draftRoutine.ejercicios.filter(x=>x!=='group:'+id);
+  await dropGroup(id);render();
+}
 function toggleRoutineEx(n){
   const i=draftRoutine.ejercicios.indexOf(n);
   if(i>-1)draftRoutine.ejercicios.splice(i,1);else draftRoutine.ejercicios.push(n);
@@ -469,7 +648,7 @@ function startRoutine(id){
   setTab('entrenar');
 }
 function exitRoutine(){
-  activeRoutine=null;editingWorkoutId=null;
+  activeRoutine=null;editingWorkoutId=null;groupSession=null;groupDraft=null;groupAdd=null;
   entrenarModo='fuerza';draftEx='';draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
   render();
 }
@@ -477,15 +656,26 @@ function renderRutinas(){
   const names=exerciseNames();
   const picker=names.length?names.map(n=>`<span class="tag ${draftRoutine.ejercicios.includes(n)?'active':''}" onclick="toggleRoutineEx('${n.replace(/'/g,"\\'")}')">${n}</span>`).join(''):'<span class="empty">Registra algún ejercicio de fuerza primero en Entrenar</span>';
   const cardioPicker=['correr','natacion','comba'].map(t=>{const key='cardio:'+t;return `<span class="tag ${draftRoutine.ejercicios.includes(key)?'active':''}" onclick="toggleRoutineEx('${key}')">${cardioIcon(t)} ${cardioNombre(t)}</span>`;}).join('');
+  const gPicker=state.groups.map(g=>`<span class="tag ${draftRoutine.ejercicios.includes('group:'+g.id)?'active':''}" onclick="toggleRoutineEx('group:${g.id}')">🔗 ${escHtml(g.nombre)} · ${gLabel(g.tipo)}</span>`).join('');
+  const rGroupHtml=rGroupDraft?`<div style="margin:8px 0 4px;padding:12px;border-radius:12px;border:1px solid var(--accent);background:var(--card2)">
+    <b style="font-size:13px">Nueva serie agrupada</b>
+    <div class="tag-row" style="margin:8px 0">${Object.keys(GTIPOS).map(t=>`<span class="tag ${rGroupDraft.tipo===t?'active':''}" onclick="rGroupTipo('${t}')">${GTIPOS[t].n}</span>`).join('')}</div>
+    <label style="margin-top:4px">Nombre (obligatorio)</label><input placeholder="Ej. Congestión" value="${escHtml(rGroupDraft.nombre)}" oninput="rGroupDraft.nombre=this.value">
+    <label style="margin-top:10px">Ejercicios (${rGroupDraft.ejercicios.length}/${GTIPOS[rGroupDraft.tipo].max})</label>
+    <div class="tag-row">${names.length?names.map(n=>`<span class="tag ${rGroupDraft.ejercicios.includes(n)?'active':''}" data-n="${escHtml(n)}" onclick="rGroupToggle(this.dataset.n)">${escHtml(n)}</span>`).join(''):'<span class="empty">Registra ejercicios en Entrenar primero, o crea la serie desde Entrenar</span>'}</div>
+    <div class="row"><button class="btn-primary" onclick="createRGroup()">Crear y añadir a la rutina</button><button class="btn-ghost" style="margin-top:14px" onclick="rGroupDraft=null;renderRutinas()">Cancelar</button></div></div>`
+    :`<button class="btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="openRGroup()">+ Crear biserie, triserie o superserie</button>`;
+  const groupsList=state.groups.length?`<div class="card"><h2>Series agrupadas</h2>${state.groups.map(g=>`<div class="item"><div><b>${escHtml(g.nombre)}</b> <span class="pill">${gLabel(g.tipo)}</span><div style="font-size:12px;color:var(--sub);margin-top:3px">${g.ejercicios.map(escHtml).join(' + ')}</div></div><button class="btn-ghost btn-sm" onclick="delGroupUi('${g.id}')">✕</button></div>`).join('')}</div>`:'';
   const listHtml=state.routines.length?state.routines.map(r=>`<div class="item" style="display:block">
     <div style="display:flex;justify-content:space-between;align-items:center"><b>${r.nombre}</b><div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="startRoutine('${r.id}')">Empezar</button><button class="btn-ghost btn-sm" onclick="editRoutine('${r.id}')">Editar</button><button class="btn-ghost btn-sm" onclick="delRoutine('${r.id}')">✕</button></div></div>
-    <div class="tag-row" style="margin-top:6px">${r.ejercicios.map(n=>`<span class="pill">${routineItemLabel(n)}</span>`).join('')}</div></div>`).join(''):'<div class="empty">Aún no tienes rutinas</div>';
+    <div class="tag-row" style="margin-top:6px">${r.ejercicios.map(n=>{if(isGroupItem(n)){const g=groupOfItem(n);return g?`<div style="flex-basis:100%;border-left:4px solid var(--accent);background:var(--card2);border-radius:10px;padding:6px 10px"><span style="font-size:11px;font-weight:700;letter-spacing:.04em">🔗 ${gLabel(g.tipo).toUpperCase()} · ${escHtml(g.nombre)}</span><div style="font-size:12px;color:var(--sub);margin-top:2px">${g.ejercicios.map(escHtml).join(' + ')}</div></div>`:'';}return `<span class="pill">${routineItemLabel(n)}</span>`;}).join('')}</div></div>`).join(''):'<div class="empty">Aún no tienes rutinas</div>';
   main.innerHTML=`<div class="card"><h2>${editingRoutineId?'Editar rutina':'Nueva rutina'}</h2>
     <label>Nombre</label><input placeholder="Ej. Empuje, Pierna día A..." value="${draftRoutine.nombre}" oninput="draftRoutine.nombre=this.value">
     <label style="margin-top:12px">Fuerza</label><div class="tag-row">${picker}</div>
     <label>Cardio</label><div class="tag-row">${cardioPicker}</div>
+    <label>Series agrupadas</label><div class="tag-row">${gPicker}</div>${rGroupHtml}
     <div class="row"><button class="btn-primary" onclick="saveRoutine()">${editingRoutineId?'Guardar cambios':'Guardar rutina'}</button>${editingRoutineId?'<button class="btn-ghost" style="margin-top:14px" onclick="cancelEditRoutine()">Cancelar</button>':''}</div></div>
-    <div class="card"><h2>Tus rutinas</h2>${listHtml}</div>`;
+    <div class="card"><h2>Tus rutinas</h2>${listHtml}</div>${groupsList}`;
 }
 
 // ---------- PROGRESO ----------
@@ -544,6 +734,8 @@ function renderProgreso(){
       badge=`<div style="margin-bottom:8px"><span class="pill" style="background:${col}22;color:${col};font-weight:700">${p>0?'↑':p<0?'↓':'→'} ${p>0?'+':''}${p.toFixed(1)}% vs sesión anterior</span></div>`;
     }
     const legend=`<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--sub);margin-top:8px"><span><i style="color:#22c55e">●</i> Sube mucho</span><span><i style="color:#8fd19e">●</i> Sube</span><span><i style="color:#B3A08C">●</i> Igual</span><span><i style="color:#f5a35c">●</i> Baja</span><span><i style="color:#ff6b6b">●</i> Baja mucho</span></div>`;
+    const gs=state.groups.filter(g=>g.ejercicios.includes(selectedExProgreso));
+    if(gs.length)badge+=`<div style="margin-bottom:8px">${gs.map(g=>`<span class="pill" style="border-left:3px solid var(--accent);margin-right:4px">🔗 ${gLabel(g.tipo)} · ${escHtml(g.nombre)}</span>`).join('')}</div>`;
     chartCard=badge+'<div class="chart-wrap"><canvas id="chartProgreso"></canvas></div>'+legend;
   }
   main.innerHTML=`${modoToggle}<div class="card"><h2>Ejercicio</h2><div class="tag-row">${tags||'<span class="empty">Sin ejercicios aún</span>'}</div>${statsHtml}${chartCard}</div>`;
