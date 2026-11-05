@@ -6,8 +6,8 @@
 <title>FitTrack</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-:root{--focus:#FFD84D;--bg:#1b1410;--card:#241c16;--card2:#2d241c;--text:#f0e6d8;--sub:#b3a08c;--accent:#D9B38C;--accent-text:#D9B38C;--on-accent:#2a1d12;--accent-soft:#F0DDC3;--accent2:#FF7A45;--danger:#ff6b6b;--border:#3a2f25;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--focus:#B3200F;--bg:#f2e9d8;--card:#fbf5ea;--card2:#ede0c8;--text:#3a2f22;--sub:#8a7962;--accent:#C9A27E;--accent-text:#8A5A33;--on-accent:#2a1d12;--accent-soft:#E8D2B2;--accent2:#d9660f;--border:#ddcba8}}
+:root{--focus:#FFD84D;--bg:#1b1410;--card:#241c16;--card2:#2d241c;--text:#f0e6d8;--sub:#b3a08c;--accent:#D9B38C;--accent-text:#D9B38C;--on-accent:#2a1d12;--accent-soft:#F0DDC3;--accent2:#FF7A45;--danger:#ff6b6b;--border:#3a2f25;--t-aprox:#A8C08A;--t-calent:#F0B84D;--t-congest:#D98FC0;--t-efect:#F0795A;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--focus:#B3200F;--bg:#f2e9d8;--card:#fbf5ea;--card2:#ede0c8;--text:#3a2f22;--sub:#8a7962;--accent:#C9A27E;--accent-text:#8A5A33;--on-accent:#2a1d12;--accent-soft:#E8D2B2;--accent2:#d9660f;--border:#ddcba8;--t-aprox:#5E7F3C;--t-calent:#B07A0E;--t-congest:#A2428A;--t-efect:#C2401F}}
 :root[data-theme="dark"]{--bg:#1b1410;--focus:#FFD84D;--accent:#D9B38C;--accent-text:#D9B38C;--on-accent:#2a1d12;--accent-soft:#F0DDC3}
 .cur{color:var(--focus);text-transform:uppercase;letter-spacing:.04em;font-weight:900}
 html,body{height:100%}
@@ -29,6 +29,8 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 .btn-sm{padding:6px 10px;font-size:12px}
 .set-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-bottom:6px}
 .set-row button{background:var(--card2);color:var(--danger);padding:8px}
+.set-tags{display:flex;gap:5px;flex-wrap:wrap;margin:6px 0 4px}
+.set-tags span{font-size:10.5px;padding:3px 8px;border-radius:20px;border:1px solid var(--border);color:var(--sub);cursor:pointer;background:transparent}
 .tabbar{flex:0 0 auto;display:flex;background:var(--card);border-top:1px solid var(--border)}
 .tabbar button{flex:1;background:none;border-radius:0;padding:10px 4px 8px;color:var(--sub);font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px;font-weight:600}
 .tabbar button.active{color:var(--accent-text)}
@@ -76,7 +78,7 @@ button{border:none;border-radius:10px;padding:11px 16px;font-weight:700;font-siz
 </nav>
 <script>
 let state={workouts:[],measurements:[],goals:[],routines:[],cardio:[],groups:[]};
-let groupSession=null,groupDraft=null,groupAdd=null,rGroupDraft=null;
+let routineAdd=null,groupSession=null,groupDraft=null,groupAdd=null,rGroupDraft=null;
 let currentTab='entrenar',charts={},db=null,useDb=false,entrenarModo='fuerza';
 let draftCardio={tipo:'correr',fecha:today(),km:'',tiempo:'',largos:'',sets:'',tiempoSet:'',esfuerzo:'70'};
 let draftEx='',draftDate=today(),exQuery='',showAllHist=false,prefilledFor=null;
@@ -228,11 +230,19 @@ function onboardingCard(){
 }
 
 // ---------- ENTRENAR ----------
+const TIPOS={aprox:{n:'Aproximación',s:'Aprox.'},calent:{n:'Calentamiento',s:'Calent.'},congest:{n:'Congestión',s:'Congest.'},efect:{n:'Efectiva',s:'Efectiva'}};
+function tcol(t){return TIPOS[t]?'var(--t-'+t+')':'';}
+function setTxtHtml(s,long){
+  const base=long?s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%':s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)';
+  if(!TIPOS[s.tipo])return base;
+  return `<span style="color:${tcol(s.tipo)};font-weight:600"><span style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:800">${TIPOS[s.tipo].s}</span> ${base}</span>`;
+}
+function setTipo(i,t){draftSets[i].tipo=draftSets[i].tipo===t?'':t;renderEntrenar();}
 function addSet(){draftSets.push({peso:'',reps:'',esfuerzo:'80'});renderEntrenar();}
 function removeSet(i){draftSets.splice(i,1);if(!draftSets.length)draftSets=[{peso:'',reps:'',esfuerzo:'80'}];renderEntrenar();}
 function saveWorkout(){
   if(!draftEx.trim()){alert('Escribe el nombre del ejercicio');return;}
-  const sets=draftSets.filter(s=>s.peso&&s.reps).map(s=>({peso:+s.peso,reps:+s.reps,esfuerzo:+(s.esfuerzo||80)}));
+  const sets=draftSets.filter(s=>s.peso&&s.reps).map(s=>({peso:+s.peso,reps:+s.reps,esfuerzo:+(s.esfuerzo||80),...(TIPOS[s.tipo]?{tipo:s.tipo}:{})}));
   if(!sets.length){alert('Añade al menos una serie con peso y repeticiones');return;}
   const data={ejercicio:findExercise(draftEx)||draftEx.trim(),fecha:draftDate,sets};
   const wasEditing=!!editingWorkoutId;
@@ -253,7 +263,7 @@ function saveWorkout(){
 function editWorkout(id){
   const w=state.workouts.find(x=>x.id===id);if(!w)return;
   editingWorkoutId=id;draftEx=w.ejercicio;draftDate=w.fecha;
-  draftSets=w.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo),touched:{peso:true,reps:true,esfuerzo:true}}));
+  draftSets=w.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo),tipo:s.tipo||'',touched:{peso:true,reps:true,esfuerzo:true}}));
   renderEntrenar();
   const el=document.getElementById('formCard');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -275,7 +285,7 @@ function lastWorkoutForExercise(name,date){
 }
 function prefillSetsFrom(previous){
   if(!previous||!previous.sets||!previous.sets.length)return [{peso:'',reps:'',esfuerzo:'80'}];
-  return previous.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo)}));
+  return previous.sets.map(s=>({peso:String(s.peso),reps:String(s.reps),esfuerzo:String(s.esfuerzo),tipo:s.tipo||''}));
 }
 // Rutina activa: ejercicio seleccionado, hecho hoy, navegación
 const GTIPOS={biserie:{n:'Biserie',min:2,max:2},triserie:{n:'Triserie',min:3,max:3},superserie:{n:'Superserie',min:2,max:6}};
@@ -321,6 +331,29 @@ function advanceRoutine(stay){
     }
   }
   applyRoutineItem(cur||items[0]);
+}
+// Añadir ejercicios a la rutina que se está entrenando
+function rAddChipsHtml(){
+  if(!activeRoutine)return '';
+  const q=norm(routineAdd?routineAdd.q:'');
+  const inR=activeRoutine.ejercicios;
+  const strength=exercisesByRecent().filter(n=>!inR.includes(n)&&(!q||norm(n).includes(q)));
+  const cardio=['correr','natacion','comba'].filter(t=>!inR.includes('cardio:'+t)&&(!q||norm(cardioNombre(t)).includes(q)));
+  const tags=strength.map(n=>`<span class="tag" data-n="${escHtml(n)}" onclick="addToActiveRoutine(this.dataset.n)">${escHtml(n)}</span>`).concat(cardio.map(t=>`<span class="tag" onclick="addToActiveRoutine('cardio:${t}')">${cardioIcon(t)} ${cardioNombre(t)}</span>`));
+  return tags.length?tags.join(''):'<div class="empty" style="padding:6px 0;width:100%">Escribe el nombre de un ejercicio nuevo y pulsa «Añadir»</div>';
+}
+function onRAddInput(v){routineAdd.q=v;const c=document.getElementById('rAddChips');if(c)c.innerHTML=rAddChipsHtml();}
+async function addToActiveRoutine(name){
+  if(!activeRoutine)return;
+  const it=isCardioItem(name)?name:(findExercise(name)||(name||'').trim());
+  if(!it)return;
+  if(!activeRoutine.ejercicios.some(x=>norm(x)===norm(it))){
+    await updateDoc('routines',activeRoutine.id,{ejercicios:[...activeRoutine.ejercicios,it]});
+    await loadAll();
+    activeRoutine=state.routines.find(r=>r.id===activeRoutine.id)||activeRoutine;
+  }
+  routineAdd=null;editingWorkoutId=null;
+  applyRoutineItem(it);render();
 }
 // ---------- SERIES AGRUPADAS (biserie / triserie / superserie) ----------
 function openGroupPanel(){groupDraft={tipo:'biserie',nombre:''};renderEntrenar();setTimeout(()=>{const e=document.getElementById('gName');if(e)e.focus();},50);}
@@ -491,20 +524,23 @@ function renderEntrenar(){
   const setsHtml=draftSets.map((s,i)=>{
     const ps=prevSets[i];
     const faint=f=>ps&&!(s.touched&&s.touched[f]);
-    return `<div class="set-row">
-    <input type="number" style="${faint('peso')?'color:var(--sub)':''}" placeholder="Kg" value="${s.peso}" onfocus="setFocus(this,${i},'peso')" onblur="setBlur(this,${i},'peso')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.peso=true;draftSets[${i}].peso=this.value;this.style.color='var(--text)'">
-    <input type="number" style="${faint('reps')?'color:var(--sub)':''}" placeholder="Reps" value="${s.reps}" onfocus="setFocus(this,${i},'reps')" onblur="setBlur(this,${i},'reps')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.reps=true;draftSets[${i}].reps=this.value;this.style.color='var(--text)'">
-    <input type="number" style="${faint('esfuerzo')?'color:var(--sub)':''}" placeholder="%" value="${s.esfuerzo}" onfocus="setFocus(this,${i},'esfuerzo')" onblur="setBlur(this,${i},'esfuerzo')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.esfuerzo=true;draftSets[${i}].esfuerzo=this.value;this.style.color='var(--text)'">
+    const tc=tcol(s.tipo);
+    const col=f=>{const faint=ps&&!(s.touched&&s.touched[f]);return tc?`border-color:${tc};background:color-mix(in srgb,${tc} 16%,transparent);color:${faint?'var(--sub)':tc}`:(faint?'color:var(--sub)':'');};
+    const done=`this.style.color='${tc||'var(--text)'}'`;
+    return `<div class="set-tags">${Object.keys(TIPOS).map(t=>`<span style="${s.tipo===t?`background:${tcol(t)};border-color:${tcol(t)};color:var(--bg);font-weight:700`:''}" onclick="setTipo(${i},'${t}')" title="${TIPOS[t].n}">${TIPOS[t].s}</span>`).join('')}</div><div class="set-row">
+    <input type="number" style="${col('peso')}" placeholder="Kg" value="${s.peso}" onfocus="setFocus(this,${i},'peso')" onblur="setBlur(this,${i},'peso')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.peso=true;draftSets[${i}].peso=this.value;${done}">
+    <input type="number" style="${col('reps')}" placeholder="Reps" value="${s.reps}" onfocus="setFocus(this,${i},'reps')" onblur="setBlur(this,${i},'reps')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.reps=true;draftSets[${i}].reps=this.value;${done}">
+    <input type="number" style="${col('esfuerzo')}" placeholder="%" value="${s.esfuerzo}" onfocus="setFocus(this,${i},'esfuerzo')" onblur="setBlur(this,${i},'esfuerzo')" oninput="draftSets[${i}].touched=draftSets[${i}].touched||{};draftSets[${i}].touched.esfuerzo=true;draftSets[${i}].esfuerzo=this.value;${done}">
     <button onclick="removeSet(${i})">✕</button></div>`;
   }).join('');
-  const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>s.peso+' kg × '+s.reps+' @ '+s.esfuerzo+'%').join(' · ')}</div>`:'';
+  const previousHint=previous?`<div style="margin:8px 0 2px;padding:8px 10px;border-radius:10px;background:var(--card2);color:var(--sub);font-size:11px">Última vez · ${fmtDate(previous.fecha)} · ${(previous.sets||[]).map(s=>setTxtHtml(s,true)).join(' · ')}</div>`:'';
   const filtered=!!selEx&&(!!activeRoutine||inGroup2||!showAllHist);
   const histSource=filtered?state.workouts.filter(w=>w.ejercicio===selEx):state.workouts;
   const histHtml=histSource.length?histSource.slice(0,filtered?10:25).map(w=>{
     const top=w.sets.reduce((a,s)=>s.peso>a.peso?s:a,w.sets[0]);
     const rm=Math.round(top.peso*(1+top.reps/30)*10)/10;
     return `<div class="item">
-    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> ${w.gnombre?`<span class="pill" style="border-left:3px solid var(--accent)">🔗 ${gLabel(w.gtipo)} · ${escHtml(w.gnombre)}</span> `:''}<span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>s.peso+'kg×'+s.reps+' ('+s.esfuerzo+'%)').join(' · ')}</span><br><span style="font-size:11px;color:var(--accent-text);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
+    <div><b>${w.ejercicio}</b><br><span class="pill">${fmtDate(w.fecha)}</span> ${w.gnombre?`<span class="pill" style="border-left:3px solid var(--accent)">🔗 ${gLabel(w.gtipo)} · ${escHtml(w.gnombre)}</span> `:''}<span style="font-size:12px;color:var(--sub)">${(w.sets||[]).map(s=>setTxtHtml(s,false)).join(' · ')}</span><br><span style="font-size:11px;color:var(--accent-text);font-weight:600">🏆 PR estimado (1RM): ${rm}kg</span></div>
     <div style="display:flex;gap:6px"><button class="btn-ghost btn-sm" onclick="editWorkout('${w.id}')">✎</button><button class="btn-ghost btn-sm" onclick="delWorkout('${w.id}')">✕</button></div></div>`;
   }).join(''):`<div class="empty">${filtered?'Aún no hay registros de este ejercicio':'Aún no hay entrenamientos registrados'}</div>`;
   const doneCount=activeRoutine?activeRoutine.ejercicios.filter(routineItemDone).length:0;
@@ -541,7 +577,9 @@ function renderEntrenar(){
         <div style="display:flex;justify-content:space-between;align-items:center"><b class="${entrenarModo==='fuerza'&&draftEx===n?'cur':''}" style="font-size:13px">${hecho?'✓ ':''}${n}</b><span style="font-size:11px;color:${col}">${lastTop?lastTop.peso+'kg×'+lastTop.reps:'sin datos'}</span></div>
         <div class="progress" style="height:6px;margin-top:5px"><div style="width:${pctBar}%;background:${col}"></div></div>
         <div style="font-size:10px;color:var(--sub);margin-top:3px">${sessions.length} sesiones · mejor ${best||'—'}kg${last?' · '+last.sets.length+' series':''}</div></div>`;
-    }).join('')}</div></div>`:'';
+    }).join('')}</div>
+    ${routineAdd?`<div style="margin-top:10px"><div class="row"><input id="rAddInput" autocomplete="off" placeholder="Buscar o escribir ejercicio nuevo" value="${escHtml(routineAdd.q)}" oninput="onRAddInput(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();addToActiveRoutine(routineAdd.q)}"><button class="btn-ghost btn-sm" style="flex:0 0 auto" onclick="addToActiveRoutine(routineAdd.q)">Añadir</button></div><div id="rAddChips" class="tag-row" style="margin-top:8px;max-height:110px;overflow-y:auto">${rAddChipsHtml()}</div></div>`:''}
+    <button class="btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="routineAdd=routineAdd?null:{q:''};renderEntrenar();setTimeout(()=>{const e=document.getElementById('rAddInput');if(e)e.focus();},50)">${routineAdd?'Cerrar':'+ Añadir ejercicio a la rutina'}</button></div>`:'';
   const modoToggle=`<div class="tag-row" style="margin-bottom:10px"><span class="tag ${entrenarModo==='fuerza'?'active':''}" onclick="entrenarModo='fuerza';render()">🏋️ Fuerza</span><span class="tag ${entrenarModo==='cardio'?'active':''}" onclick="entrenarModo='cardio';render()">🏃 Cardio</span></div>`;
   const topBar=fixed?'':onboardingCard()+modoToggle;
   if(entrenarModo==='cardio'&&!inGroup2){main.innerHTML=topBar+routineBanner+renderCardioForm(!!activeRoutine);return;}
@@ -648,7 +686,7 @@ function startRoutine(id){
   setTab('entrenar');
 }
 function exitRoutine(){
-  activeRoutine=null;editingWorkoutId=null;groupSession=null;groupDraft=null;groupAdd=null;
+  activeRoutine=null;routineAdd=null;editingWorkoutId=null;groupSession=null;groupDraft=null;groupAdd=null;
   entrenarModo='fuerza';draftEx='';draftDate=today();draftSets=[{peso:'',reps:'',esfuerzo:'80'}];
   render();
 }
